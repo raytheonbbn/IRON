@@ -1,0 +1,30 @@
+digraph sliq_copa3_delaytracketupdate {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set recent_min_delay = delay\nSet recent_obs_time = now" ];
+    blk2 [ shape = box,     label = "Set bin_dur = (win_sec / DT_BINS)" ];
+    blk3 [ shape = box,     label = "Store min_delay = recent_min_delay and obs_time = now in next circular array element\nSet win_start_time = now - win_sec\nSet cand_min_delay = lowest min_delay of elements in array with obs_time < win_start_time" ];
+    blk4 [ shape = box,     label = "Set result = cand_min_delay" ];
+    blk5 [ shape = box,     label = "Set recent_min_delay = HUGE_RTT\nIncrement next circular array index\nSet prev_time = now" ];
+    blk6 [ shape = box,     label = "Set result = delay" ];
+    dsc1 [ shape = diamond, label = "Is delay < recent_min_delay?" ];
+    dsc2 [ shape = diamond, label = "Is now >= (prev_time + bin_dur)?" ];
+    dsc3 [ shape = diamond, label = "Is cand_min_delay < HUGE_RTT?" ];
+    dsc4 [ shape = diamond, label = "Is delay < result?" ];
+
+    strt -> dsc1 [ label = "DelayTrackerUpdate(delay, now, win_sec, result)" ];
+    dsc1 -> blk1 [ label = "Yes" ];
+    dsc1 -> blk2 [ label = "No" ];
+    blk1 -> blk2;
+    blk2 -> dsc2;
+    dsc2 -> blk3 [ label = "Yes" ];
+    dsc2 -> dsc4 [ label = "No" ];
+    blk3 -> dsc3;
+    dsc3 -> blk4 [ label = "Yes" ];
+    dsc3 -> blk5 [ label = "No" ];
+    blk4 -> blk5;
+    blk5 -> done;
+    dsc4 -> blk6 [ label = "Yes" ];
+    dsc4 -> done [ label = "No" ];
+    blk6 -> done;
+}

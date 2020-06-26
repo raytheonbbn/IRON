@@ -1,0 +1,91 @@
+#
+
+include ..\config.nmake
+
+all: fec, lrm, mgen, qlam, sliq
+
+mgen:: 
+	cd mgen
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake
+	cd ..
+
+qlam::
+	cd qlam
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake
+	cd ..
+
+sliq::
+	cd sliq
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake
+	cd ..
+
+lrm:: 
+	cd lrm
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake
+	cd ..
+
+fec:: 
+	cd fec
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake
+	cd ..
+
+clean:
+	cd mgen
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake clean
+	cd ..
+	cd qlam
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake clean
+	cd ..
+	cd lrm
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake clean
+	cd ..
+	cd sliq
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake clean
+	cd ..
+	cd fec
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake clean
+	cd ..
+
+distclean: clean
+	cd mgen
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake distclean
+	cd ..
+	cd qlam
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake distclean
+	cd ..
+	cd lrm
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake distclean
+	cd ..
+	cd sliq
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake distclean
+	cd ..
+	cd fec
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake distclean
+	cd ..
+
+maintainer-clean: distclean
+	cd mgen
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake maintainer-clean
+	cd ..
+	cd qlam
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake maintainer-clean
+	cd ..
+	cd lrm
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake maintainer-clean
+	cd ..
+	cd sliq
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake maintainer-clean
+	cd ..
+	cd fec
+	$(MAKE) /$(MAKEFLAGS) -f Makefile.nmake maintainer-clean
+	cd ..
+
+install-plugins:
+!IFDEF ENABLE_LIBWIRESHARK
+	xcopy fec\*.dll ..\$(INSTALL_DIR)\plugins\ /d
+	xcopy lrm\*.dll ..\$(INSTALL_DIR)\plugins\ /d
+	xcopy mgen\*.dll ..\$(INSTALL_DIR)\plugins\ /d
+	xcopy qlam\*.dll ..\$(INSTALL_DIR)\plugins\ /d
+	xcopy sliq\*.dll ..\$(INSTALL_DIR)\plugins\ /d
+
+!ENDIF

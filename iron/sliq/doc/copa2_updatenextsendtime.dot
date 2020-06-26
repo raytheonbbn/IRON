@@ -1,0 +1,15 @@
+digraph sliq_copa2_updatenextsendtime {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set pkt_intersend_time = (ist * ((bytes + DATA_HDR_BASE_SIZE + PKT_OVERHEAD) / (NPS + PKT_OVERHEAD)))" ];
+    blk2 [ shape = box,     label = "Set next_send_time = (now + pkt_intersend_time)" ];
+    blk3 [ shape = box,     label = "Set next_send_time = (next_send_time + pkt_intersend_time)" ];
+    dsc1 [ shape = diamond, label = "Is now > (next_send_time + QUIET_PERIOD)?" ];
+
+    strt -> blk1 [ label = "UpdateNextSendTime(bytes)" ];
+    blk1 -> dsc1;
+    dsc1 -> blk2 [ label = "Yes" ];
+    dsc1 -> blk3 [ label = "No" ];
+    blk2 -> done;
+    blk3 -> done;
+}

@@ -1,0 +1,219 @@
+# IRON: iron_headers
+#
+# Distribution A
+#
+# Approved for Public Release, Distribution Unlimited
+#
+# EdgeCT (IRON) Software Contract No.: HR0011-15-C-0097
+# DCOMP (GNAT)  Software Contract No.: HR0011-17-C-0050
+# Copyright (c) 2015-20 Raytheon BBN Technologies Corp.
+#
+# This material is based upon work supported by the Defense Advanced
+# Research Projects Agency under Contracts No. HR0011-15-C-0097 and
+# HR0011-17-C-0050. Any opinions, findings and conclusions or
+# recommendations expressed in this material are those of the author(s)
+# and do not necessarily reflect the views of the Defense Advanced
+# Research Project Agency.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# IRON: end
+#
+# This is an example Admission planner control (amp) script. These
+# scripts are to be fed into the "amp" program using the "-f" command
+# line option in order to dynamically control the characteristics of
+# admission control during an experiment or test. A single script is
+# capable of contolling multiple proxies, which simplifies event
+# timings. This should be modified to support the desired system
+# configuration and experiment parameters.
+#
+# Commands are of the form: 
+# <time> <proxy> add_service <port_range>;<service definition string>
+# <time> <proxy> add_flow <four_tuple> <service definition string>
+# <time> <proxy> del_flow <four_tuple>
+#
+# <time> Is the execution time of the command and must be specified in
+# seconds.  It is relative to the start time of the execution of amp.
+#
+# <proxy> Is the target proxy and can be either "tcp_proxy" or
+# "udp_proxy".
+#
+# Three commands are currently supported: "add_service", "add_flow"
+# and "del_flow.  
+#
+# To modify a service, use the add_service command and exisiting flows
+# that use the service definition will be updated. Future flows which
+# fall into this service definition will use the new configuration.
+#
+# To modify a flow, use the add_flow command and exisiting flows that
+# use the flow definition will be updated. Future flows which fall
+# into this flow definition will use the new configuration. 
+#
+# === Service Definitions ===
+#
+# A service definition is a configuration for flows that use any port
+# within a specified range of ports. If either the source port or the
+# destination port falls into the range, the service definition will
+# apply unless there is an applicable flow definition.
+#
+# Service definitions can only be added or modified, they cannot be
+# deleted. To modify a service, use the "add_service"
+# command. Exisiting flows that use the service definition will be
+# updated. Future flows which fall into this service definition will
+# use the new configuration.
+#
+# Service definitions require a port range, of the form
+# "lo_port-hi_port", and a <service definition string>. The <service
+# definition string> defines how the flow is handled in the proxies
+# and the format differs for each proxy.
+#
+# ==== TCP Proxy Service Definitions ==== 
+#
+# For the TCP proxy, the <service definition string> is only the
+# utility function. Refer to Utility Function section below for
+# details on configuring utility functions.
+#
+# ==== UDP Proxy Service Definitions ====
+#
+# For the UDP proxy, the <service definition string> has the form: 
+#
+# <Encoding Config>;<Utility Function string>;[<optional=value>;<optional=value>;...]
+#
+# <Encoding Config> is a semi-colon separated string of the form:
+#
+# baseRate/totrate;maxChunkSz;maxHoldTimeMsecs;orderFlag;timeout;timeToGo
+#
+# Each of these is required:
+#
+#  1) baseRate/totRate is the default FEC encoding rate
+#  2) maximum payload chunk size, in bytes (1 to 65535)
+#  3) maximum hold time, in msecs, before we force FEC generation (>= 0)
+#  4) orderFlag: ~0 -> strict ordering, 0 -> release immediately
+#  5) timeout, in sec, how long gateway keeps old state (0 is forever)
+#  6) Time-to-go time, in microseconds. A value of 0 indicates that
+#     time-to-go time has the maximum value permitted (maximum of signed
+#     32-bit quantity).
+#
+# <utility function string> is defined in a different subsection below. 
+#
+# The optional values supported are: "dscp=XX" and "rord=YYY". 
+#
+# "dscp" value overwrites the dscp field  in each packet under this service.
+# "rord" indicates the maximum time a packet can be held while waiting
+# for out of order packets on the destination side.
+#
+# === Flow Definitions ===
+#
+# Flow definitions are like service definitions but apply to a single
+# flow that is specified by a <four_tuple> of the form:
+# "sport;dport;saddr;daddr". Flow definitions require a <service
+# definition string>, which is defined above.
+#
+# Flow definitions take priority over service definitions. If a 
+# flow definition is added, and it applies to a flow that is currently
+# using a service definition, that flow will be reconfigured to use
+# the flow definition. If a flow definition is deleted and a flow
+# was using that flow definition, that flow will be reconfigured to
+# use the applicable service definition. Flow definitions can be
+# modified using the "add_flow" command, and existing flows that
+# use the flow definition will be reconfigured. 
+#
+# === Utility Function Definitions ===
+#
+# The utility function is used to determine the admission rate of the
+# packets from the flow into the system.
+#
+# The utility function is defined by a set of colon-separated,
+# parameter=<value> pairs. The parameters can be in any order.
+# Different utility functions require different parameters.
+#
+# Currently, there are 3 supported utility functions: LOG, TRAP, STRAP. 
+# LOG utility can be used in both the TCP proxy and the UDP proxy. 
+# TRAP and STRAP utility functions are for inelastic flows and are only
+# supported in the UDP proxy.
+#
+# To configure a TRAP utility, the following parameters must be specified:
+#  1) type=TRAP 
+#  2) m - The average desired rate of the flow in bits per second.
+#  3) b - The maximum rate at which packets should be admitted. This should
+#         be slightly higher than m, to allow the backlog to drain if there
+#         is a spike in packets. The unit is bits per second.
+#  4) p - The priority of the flow. This should be a positive integer.
+#  5) stepint - The interval in mircosends, between steps. This should be
+#         smaller than avgint so that there are several steps when we
+#         average the utility over an interval.
+#  6) avgint - The interval over which utility is estimated, in microseconds.
+#         This should be in the order of a few QLAM intervals.
+#  7) nsteps - The number of steps in the trapezoid utility. A STEP utility
+#         is a special case of a TRAP utility with a single step.
+#  8) resint - The restart interval, in microseconds. The flow will attempt
+#         to restart after being off for this duration.
+#  9) label - A string to identify the flow in the logs.
+#  10) delta - The allowed deviation from the source rate. If the flow is being
+#         serviced at a lower rate, it should be triaged. 
+#
+#  To configure a LOG utility function, the following parameters must be specified:
+#  1) type=LOG 
+#  2) a - A shape parameter that affects the steepness of the log curve. This should
+#         be an integer. The larger a, the steeper the curve values less than 100
+#         are usually good.
+#  3) m - The maximum rate at which packets should be admitted.
+#  4) p - The priority of the flow as a positive integer.
+#  5) label - A string to identify the flow in the logs.
+#
+#  To configure a STRAP utility function, the following parameters can be specified:
+#  1) type=STRAP
+#  2) p - The priority of the flow. This should be a positive integer.
+#  3) label - A string to identify the flow in the logs.
+#  The STRAP utility function supports the following optional parameters.
+#  4) stepint - The interval in mircosends, between steps. This should be
+#         smaller than avgint so that there are several steps when we
+#         average the utility over an interval.
+#  5) avgint - The interval over which utility is estimated, in microseconds.
+#         This should be in the order of a few QLAM intervals.
+#  6) nsteps - The number of steps in the trapezoid utility. A STEP utility
+#         is a special case of a TRAP utility with a single step.
+#  7) resint - The restart interval, in microseconds. The flow will attempt
+#         to restart after being off for this duration.
+#  8) delta - The allowed deviation from the source rate. If the flow is being
+#         serviced at a lower rate, it should be triaged. 
+#
+
+# The following is an example TCP Proxy service for a low priority Log
+# Utility Function:
+#
+# 2 tcp_proxy add_service 29778-29778;type=LOG:a=10:m=25000000:p=1:label=low_prio_tcp;
+#
+# The following is an example UDP Proxy service for a low priority Log
+# Utility Function:
+# 
+# 2 udp_proxy add_service 30750-30799;1/1;1500;0;0;120;0;type=LOG:a=10:m=25000000:p=1:label=low_prio_udp
+#
+#*****************************************************************************
+# User defined flow and service definitions should be placed here:
+
+
+
+#*****************************************************************************
+
+# Default TCP Proxy service definition.
+2 tcp_proxy add_service 0-65335;type=LOG:a=10:m=25000000:p=1:label=default_tcp_svc;
+
+# Default UDP Proxy service definition.
+2 udp_proxy add_service 0-65335;1/1;1500;0;0;120;0;type=LOG:a=20:m=10000000:p=1:label=default_udp_svc;

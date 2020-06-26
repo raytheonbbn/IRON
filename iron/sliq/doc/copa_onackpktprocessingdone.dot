@@ -1,0 +1,30 @@
+digraph sliq_copa_onackpktprocessingdone {
+    redy [ shape = ellipse, label = "Ready" ];
+    blk1 [ shape = box,     label = "Get element E in unacked_pkts for una_cc_seq" ];
+    blk2 [ shape = box,     label = "Do UpdateDelta(true) state machine" ];
+    blk3 [ shape = box,     label = "Set una_cc_seq = una_cc_seq + 1" ];
+    blk4 [ shape = box,     label = "Force rtt_unacked to rtt_acked\nDo UpdateUnackedRttEstimate state machine" ];
+    blk5 [ shape = box,     label = "Do UpdateIntersendTime state machine" ];
+    dsc1 [ shape = diamond, label = "Is ack_cc_seq >= una_cc_seq AND\nack_cc_seq < nxt_cc_seq?" ];
+    dsc2 [ shape = diamond, label = "While una_cc_seq < nxt_cc_seq?" ];
+    dsc3 [ shape = diamond, label = "Is E.seq > ack_cc_seq?" ];
+    dsc4 [ shape = diamond, label = "Is E.acked == true?" ];
+    dsc5 [ shape = diamond, label = "Is num_pkts_acked >= NUM_PROBES?" ];
+
+    redy -> dsc1 [ label = "OnAckPktProcessingDone" ];
+    dsc1 -> dsc2 [ label = "Yes" ];
+    dsc1 -> blk4 [ label = "No" ];
+    dsc2 -> blk1 [ label = "Yes" ];
+    dsc2 -> blk4 [ label = "No" ];
+    blk1 -> dsc3;
+    dsc3 -> blk4 [ label = "Yes" ];
+    dsc3 -> dsc4 [ label = "No" ];
+    dsc4 -> blk2 [ label = "Yes" ];
+    dsc4 -> blk3 [ label = "No" ];
+    blk2 -> blk3;
+    blk3 -> dsc2;
+    blk4 -> dsc5;
+    dsc5 -> blk5 [ label = "Yes" ];
+    dsc5 -> redy [ label = "No" ];
+    blk5 -> redy;
+}

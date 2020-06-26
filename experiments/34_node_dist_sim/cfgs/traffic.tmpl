@@ -1,0 +1,289 @@
+# IRON: iron_headers
+#
+# Distribution A
+#
+# Approved for Public Release, Distribution Unlimited
+#
+# EdgeCT (IRON) Software Contract No.: HR0011-15-C-0097
+# DCOMP (GNAT)  Software Contract No.: HR0011-17-C-0050
+# Copyright (c) 2015-20 Raytheon BBN Technologies Corp.
+#
+# This material is based upon work supported by the Defense Advanced
+# Research Projects Agency under Contracts No. HR0011-15-C-0097 and
+# HR0011-17-C-0050. Any opinions, findings and conclusions or
+# recommendations expressed in this material are those of the author(s)
+# and do not necessarily reflect the views of the Defense Advanced
+# Research Project Agency.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# IRON: end
+#
+# Traffic directives have the following format:
+#
+# IMPORTANT!! Parameters in the following specification strings should be separated
+# by a single space only!!
+#
+# For TCP and UDP flows:
+#
+#  protocol src dest num_flows src_port dst_port start_time end_time packet_size data_rate
+#
+#  The TCP and UDP flow parameters are defined as follows:
+#
+#  protocol    : tcp or udp
+#  src         : The source node, in configuration template replacement
+#                string format (e.g. $enclave1_app1_node$).
+#  dest        : The destination node, in configuration template
+#                replacement string format (e.g. $enclave2_app1_node$).
+#  num_flows   : The number of flows with this specification.
+#  src_port    : The source port for the flow. If num_flows > 1,
+#                then the source port is incremented for each flow.
+#  dst_port    : The destination port for the flow. If num_flows > 1,
+#                then the destination port is incremented for each flow.
+#  start_time  : The start time for the flow.
+#  end_time    : The end time for the flow.
+#  packet_size : The size of data packets.
+#  data_rate   : The average source rate.
+#
+#  For mcast:
+#  protocol node group num_flows src_port dst_port start_time end_time packet_size data_rate
+#  Where the parameters are defined as follows:
+#  protocol    : "mcast" (with no quotation marks).
+#  src         : The generic name of the node which can be a receiver, sender or both
+#                (e.g. node0).
+#  dest        : The multicast group address, e.g. 224.10.20.30.
+#  num_flows   : The number of flows with this specification.
+#  src_port    : The source port for the flow. If num_flows > 1,
+#                then the source port is incremented for each flow.
+#  dst_port    : The destination port for the flow. If num_flows > 1,
+#                then the source port is incremented for each flow.
+#  start_time  : The start time for the flow.
+#  end_time    : The end time for the flow.
+#  packet_size : The size of data packets.
+#  data_rate   : The average rate for sourcing data. If the rate is 0, then the node
+#                is only a receiver.
+#  Note: application nodes will automatically join the group at the start of a flow and
+#  leave the multicast group after the duration of the flow.
+#
+#  For short_tcp flows:
+#
+#  protocol src dest num_flows lo_port hi_port start_time end_time flow_size_bytes interflow_duration
+#
+#  A "short_tcp" flow is a series of short TCP flows, started
+#  sequentially.  Each flow attempts to deliver flow_size_bytes of
+#  data and the flows in a series are interflow_duration apart. The
+#  ports chosen for each flow in a series (and across all series) are
+#  chosen between the lo_port and hi_port range. For these short-tcp
+#  flows, the source port is always set to the destination port by the
+#  scripts. If there are not enough ports in the range to support all
+#  the requested short flows with a unique port, then script will fail
+#  and return an error (which will abort the experiment if using the
+#  run_exp.sh script). Each flow will run for a maximum of 2 seconds
+#  from the start time, or time taken to transmit the specified amount
+#  of data (flow_size_bytes), whichever comes first.
+#
+#  The short_tcp flow parameters are defined as follows:
+#
+#  protocol           : short_tcp
+#  src                : The source node, in configuration template
+#                       replacement string format
+#                       (e.g. $enclave1_app1_node$).
+#  dest               : The destination node, in configuration template
+#                       replacement string format
+#                       (e.g. $enclave2_app1_node$).
+#  num_flows          : The number of flows with this specification.
+#  lo_port            : The lower bound for source port number for
+#                       this flow.
+#  dst_port           : The destination port for the flow. If
+#                       num_flows > 1, then the destination port is
+#                       incremented for each flow.
+#  start_time         : The start time for the series of short flows.
+#  end_time           : The end time for the series of short flows.
+#  flow_size_bytes    : The amount of data, in bytes, that should be
+#                       transferred in a single short flow.
+#  interflow_duration : The average time between successive short
+#                       flows, in seconds. This is randomly incremented
+#                       or decremented by up to 10%.
+
+# The following are examples of flows from application host 1 in
+# Enclave 1 to application host 1 in Enclave 2:
+#
+# Example to start 10 udp flows:
+# udp $enclave1_app1_node$ $enclave2_app1_node$ 10 30777 30777 10.0 50.0 1024 3Mbps
+#
+# Example to start 2 TCP flows, each with a different start and end time:
+# tcp $enclave1_app1_node$ $enclave2_app1_node$ 1 29778 29778 10.0 50.0 1016 25Mbps
+# tcp $enclave1_app1_node$ $enclave2_app1_node$ 1 29779 29779 20.0 40.0 1008 25Mbps
+#
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 20Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30601 30601 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 20Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30602 30602 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 20Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30603 30603 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 20Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30604 30604 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 20Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30605 30605 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 20Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30606 30606 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 20Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30607 30607 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 20Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30608 30608 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 20Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30609 30609 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 20Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30610 30610 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 20Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30611 30611 10.0 1310.0 1024 0Mbps
+
+mcast $enclave1_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave2_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave3_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave4_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave5_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave6_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave7_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave8_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave9_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave10_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave11_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 0Mbps
+mcast $enclave12_app1_node$ 227.9.18.31 1 30612 30612 10.0 1310.0 1024 20Mbps

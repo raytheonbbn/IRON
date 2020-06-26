@@ -1,0 +1,36 @@
+digraph sliq_data_receive {
+    strt [ shape = ellipse, label = "Start" ];
+    blk1 [ shape = box,     label = "Send ACK pkt\nStop ACK timer\nDiscard data pkt" ];
+    blk2 [ shape = box,     label = "Add data pkt to receive window" ];
+    blk3 [ shape = box,     label = "Send ACK pkt\nStop ACK timer" ];
+    blk4 [ shape = box,     label = "Start ACK timer" ];
+    blk5 [ shape = box,     label = "Deliver data to app\nClean up data pkts for delivered data in receive window" ];
+    blk6 [ shape = box,     label = "Send ACK pkt\nStop ACK timer" ];
+    dsc1 [ shape = diamond, label = "Is data pkt\npersist flag set?" ];
+    dsc2 [ shape = diamond, label = "Is data\nmissing?" ];
+    dsc3 [ shape = diamond, label = "Is last data\npkt ACKed?" ];
+    dsc4 [ shape = diamond, label = "Is data ready\nto deliver to app?" ];
+
+    strt -> dsc1 [ label = "Recv data pkt" ];
+
+    dsc1 -> blk1 [ label = "Yes" ];
+    blk1 -> strt;
+
+    dsc1 -> blk2 [ label = "No" ];
+    blk2 -> dsc2;
+
+    dsc2 -> blk3 [ label = "Yes" ];
+    blk3 -> dsc4;
+
+    dsc2 -> dsc3 [ label = "No" ];
+    dsc3 -> blk3 [ label = "No" ];
+    dsc3 -> blk4 [ label = "Yes" ];
+    blk4 -> dsc4;
+
+    dsc4 -> blk5 [ label = "Yes" ];
+    blk5 -> strt;
+    dsc4 -> strt [ label = "No" ];
+
+    strt -> blk6 [ label = "ACK timer expires" ];
+    blk6 -> strt;
+}

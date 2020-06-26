@@ -1,0 +1,15 @@
+# Ignore emacs tilde files.
+*~
+
+# Ignore compiled python files.
+*.pyc
+
+# Ignore simulation output files.
+*.pcap
+*.tr
+*.flowmonitor
+
+# Ignore ns3.23 build products.
+ns-allinone-3.23/ns-3.23/build
+ns-allinone-3.23/ns-3.23/.lock-waf_linux2_build
+ns-allinone-3.23/ns-3.23/.waf-*

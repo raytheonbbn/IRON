@@ -1,0 +1,29 @@
+digraph sliq_stream_establishment {
+    strt [ shape = ellipse, label = "Start" ];
+    sdct [ shape = ellipse, label = "SENT_CREATE" ];
+    est1 [ shape = ellipse, label = "ESTABLISHED" ];
+    est2 [ shape = ellipse, label = "ESTABLISHED" ];
+    cls1 [ shape = ellipse, label = "CLOSED" ];
+    cls2 [ shape = ellipse, label = "CLOSED" ];
+
+    strt -> sdct [ label = "App calls AddStream()\n[Send CreateStream]\n[Start create timer]" ];
+
+    subgraph cluster0 {
+        label = "Active Open";
+        labeljust = "l";
+        color = red;
+        sdct -> sdct [ label = "Create timer expires\n[Send CreateStream]" ];
+        sdct -> est1 [ label = "Recv CreateStream ACK\n[Stop create timer]" ];
+        sdct -> cls1 [ label = "Too many CreateStreams sent\n[Stop create timer]\n[Send ResetStream]\n[App callback CloseStream()]" ];
+    }
+
+    strt -> est2 [ label = "Recv CreateStream\n[Send CreateStream ACK]\n[App callback NewStream()]" ];
+
+    subgraph cluster1 {
+        label = "Passive Open";
+        labeljust = "r";
+        color = blue;
+        est2 -> est2 [ label = "Recv CreateStream\n[Send CreateStream ACK]" ];
+        est2 -> cls2 [ label = "Recv ResetStream\n[App callback CloseStream()]" ];
+    }
+}

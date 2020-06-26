@@ -1,0 +1,17 @@
+#=============================================================================
+# Makefile.docs
+#=============================================================================
+
+#
+# Define the doxygen file to use to generate documentation.
+#
+DOXYGEN_FILE = Doxyfile
+
+#-----------------------------------------------------------------------------
+# Internals.  Do not modify anything below.
+#-----------------------------------------------------------------------------
+
+#
+# Include the standard terminal makefile.
+#
+include ${MAKE_HOME}/terminal.mk

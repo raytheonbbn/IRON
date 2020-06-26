@@ -1,0 +1,24 @@
+digraph sliq_copa3_damperonrttupdate {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set state = MONITOR_LOW" ];
+    blk2 [ shape = box,     label = "Set state = HOLD\nSet hold_cnt = 0\nReturn true" ];
+    blk3 [ shape = box,     label = "Return false" ];
+    dsc1 [ shape = diamond, label = "Is state == MONITOR_HIGH?" ];
+    dsc2 [ shape = diamond, label = "Is (queueing_delay / cur_ist) > DAMPER_THRES?" ];
+    dsc3 [ shape = diamond, label = "Is state == MONITOR_LOW?" ];
+    dsc4 [ shape = diamond, label = "Is (queueing_delay / cur_ist) < (1 / cur_delta)?" ];
+
+    strt -> dsc1 [ label = "DamperOnRttUpdate(queueing_delay, cur_ist, cur_delta)" ];
+    dsc1 -> dsc2 [ label = "Yes" ];
+    dsc1 -> dsc3 [ label = "No" ];
+    dsc2 -> blk1 [ label = "Yes" ];
+    dsc2 -> blk3 [ label = "No" ];
+    blk1 -> blk3;
+    dsc3 -> dsc4 [ label = "Yes" ];
+    dsc3 -> blk3 [ label = "No" ];
+    dsc4 -> blk2 [ label = "Yes" ];
+    dsc4 -> blk3 [ label = "No" ];
+    blk2 -> done;
+    blk3 -> done;
+}

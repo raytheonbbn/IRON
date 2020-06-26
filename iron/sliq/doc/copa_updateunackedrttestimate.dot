@@ -1,0 +1,22 @@
+digraph sliq_copa_updateunackedrttestimate {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Loop over elements in unacked_pkts from una_cc_seq to (nxt_cc_seq - 1)" ];
+    blk2 [ shape = box,     label = "Set wait_time = (now - E.send_time)" ];
+    blk3 [ shape = box,     label = "Update rtt_unacked with wait_time" ];
+    dsc1 [ shape = diamond, label = "Is E.skip_until_resent == true?" ];
+    dsc2 [ shape = diamond, label = "Is E.acked == false AND\nwait_time > rtt_unacked?" ];
+    dsc3 [ shape = diamond, label = "Is E.resent == false AND\nwait_time < rtt_unacked?" ];
+
+    strt -> blk1 [ label = "UpdateUnackedRttEstimate" ];
+    blk1 -> dsc1 [ label = "For element E" ];
+    dsc1 -> blk1 [ label = "Yes" ];
+    dsc1 -> blk2 [ label = "No" ];
+    blk2 -> dsc2;
+    dsc2 -> blk3 [ label = "Yes" ];
+    dsc2 -> dsc3 [ label = "No" ];
+    blk3 -> blk1;
+    dsc3 -> done [ label = "Yes" ];
+    dsc3 -> blk1 [ label = "No" ];
+    blk1 -> done [ label = "End of loop" ];
+}

@@ -1,0 +1,28 @@
+digraph sliq_stream_termination {
+    estb [ shape = ellipse, label = "ESTABLISHED" ];
+    wscl [ shape = ellipse, label = "WRITE_SIDE_CLOSED" ];
+    rscl [ shape = ellipse, label = "READ_SIDE_CLOSED" ];
+    cls1 [ shape = ellipse, label = "CLOSED" ];
+    cls2 [ shape = ellipse, label = "CLOSED" ];
+
+    estb -> wscl [ label = "App calls CloseStream()\n[Send data with FIN]" ];
+
+    subgraph cluster0 {
+        label = "Active Close";
+        labeljust = "l";
+        color = red;
+        wscl -> cls1 [ label = "Recv data with FIN\n[App callback CloseStream()]" ];
+        wscl -> cls1 [ label = "Recv ResetStream" ];
+    }
+
+    estb -> rscl [ label = "Recv data with FIN\n[App callback CloseStream()]" ];
+    estb -> cls2 [ label = "Recv ResetStream" ];
+
+    subgraph cluster1 {
+        label = "Passive Close";
+        labeljust = "r";
+        color = blue;
+        rscl -> cls2 [ label = "App calls CloseStream()\n[Send data with FIN]\n" ];
+        rscl -> cls2 [ label = "Recv ResetStream" ];
+    }
+}

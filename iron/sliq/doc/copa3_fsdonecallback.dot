@@ -1,0 +1,18 @@
+digraph sliq_copa3_fsdonecallback {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set fast_startup.rtt[0] = 0.0\nSet fast_startup.rate[0] = 0.0\nSet rtt_cnt = number of non-zero fast_startup.rtt elements\nSet r_min = minimum of non-zero fast_startup.rtt elements\nSet r_max = maximum of non-zero fast_startup.rtt elements\nSet rtt_mean = mean of non-zero fast_startup.rtt elements\nSet rate_cnt = number of non-zero fast_startup.rate elements\nSet mu = mean of non-zero fast_startup.rate elements" ];
+    blk2 [ shape = box,     label = "Stop timer fast_startup.timer\nSet all fast_startup state to zero\nResend FS_PAIRS packet pairs as in Connected" ];
+    blk3 [ shape = box,     label = "Set lambda = min(mu, (2 / (delta * (r_max - r_min))))\nSet srtt = rtt_mean\nSet standing_rtt = r_min\nSet min_rtt = r_min\nSet local_min_rtt = r_min\nSet cwnd = (lambda * r_min)\nSet ist = (1.0 / lambda)\nSet state = CLOSED_LOOP" ];
+    dsc1 [ shape = diamond, label = "Is state == FAST_STARTUP?" ];
+    dsc2 [ shape = diamond, label = "Is rtt_cnt == 0 OR\nrate_cnt == 0?" ];
+
+    strt -> dsc1 [ label = "FsDoneCallback" ];
+    dsc1 -> blk1 [ label = "Yes" ];
+    dsc1 -> done [ label = "No" ];
+    blk1 -> dsc2;
+    dsc2 -> blk2 [ label = "Yes" ];
+    dsc2 -> blk3 [ label = "No" ];
+    blk2 -> done;
+    blk3 -> done;
+}

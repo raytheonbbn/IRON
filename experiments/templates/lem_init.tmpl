@@ -1,0 +1,122 @@
+#!/usr/bin/env sh
+#
+# IRON: iron_headers
+#
+# Distribution A
+#
+# Approved for Public Release, Distribution Unlimited
+#
+# EdgeCT (IRON) Software Contract No.: HR0011-15-C-0097
+# DCOMP (GNAT)  Software Contract No.: HR0011-17-C-0050
+# Copyright (c) 2015-20 Raytheon BBN Technologies Corp.
+#
+# This material is based upon work supported by the Defense Advanced
+# Research Projects Agency under Contracts No. HR0011-15-C-0097 and
+# HR0011-17-C-0050. Any opinions, findings and conclusions or
+# recommendations expressed in this material are those of the author(s)
+# and do not necessarily reflect the views of the Defense Advanced
+# Research Project Agency.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# IRON: end
+#
+# This is an example LinkEm initialization control script template. It
+# is typically paired with a run-time control script template,
+# lem.tmpl. Both scripts use the same syntax and modify LinkEm
+# behavior via the LinkEmClient executable. This script,
+# lem_init.tmpl, is used to initialize the characteristics of the
+# LinkEm Paths prior to running an experiment. A single script is
+# capable of initializing multiple instances of LinkEm, simplifying
+# event timings. This should be modified to support the desired system
+# configuration and experiment parameters.
+#
+# For convenience, the script template defines a shell variable,
+# LEC_BIN, that should be utilized to refer to the LinkEmClient
+# executable.
+#
+# Following are the set of supported commands:
+#
+# ${LEC_BIN} -h $enclaveX_leY_node$ -w <bypass value>
+# ${LEC_BIN} -h $enclaveX_leY_node$ -A [-I <if id>] -t <throttle>
+# ${LEC_BIN} -h $enclaveX_leY_node$ -P <path id> \
+#                                      -s <address/prefix len, ...>
+# ${LEC_BIN} -h $enclaveX_leY_node$ -P <path id> \
+#                                      [-I <if id>] \
+#                                      [-d <delay>] \
+#                                      [-t <throttle>] \
+#                                      [-b <buffer size>] \
+#                                      [-B <BYTE|PKT] \
+#                                      [-E <SBER|SPER|None>] \
+#                                      [-e=<name>=<value>]
+#
+# Note: LinkEmClient supports jitter model selection with the '-J'
+# option. As it is typically not used, it is left out of the above
+# Path modification commands.
+#
+# where,
+#
+#  -h <host>                    : LinkEm host specification in "notional"
+#                                 enclave replacement string terminology.
+#                                 The format for this parameter is
+#                                 $enclaveX_leY_node$, which refers to the
+#                                 link emulation node Y in enclave X.
+#  -w <bypass value>            : DSCP value used by baseline traffic to
+#                                 bypass IRON. A value of 0 disables bypass.
+#  -A                           : Access link modification.
+#  -P <path>                    : Identifies the LinkEm Path to which the
+#                                 command applies and must be between 1 and
+#                                 15.
+#  -I <interface>               : Identifies the interface to which the
+#                                 command applies and must be 0, 1, or 2.
+#                                 A value of 0 indicates that the command
+#                                 is to be applied to both interface 1 and 2.
+#  -s=<address/prefix len,...>  : Path subnet specifications. Up to 8
+#                                 subnets specifications can be provided
+#                                 for each Path. If more than 1 subnet
+#                                 specification is provided, they must
+#                                 be separated by commas.
+#  -d <delay>                   : The Path delay, in milliseconds.
+#  -t <throttle>                : The Path rate, in Kbps. A value of 0 means
+#                                 that there is **no** throttling. To achieve
+#                                 a Path rate of 0, set the error rate for the
+#                                 Path to 1.0.
+#  -b <buffer_size>             : The Path 'front end buffer' size, in bytes
+#                                 or packets.
+#  -B <BYTE|PKT}                : The Path 'front end buffer' accounting units,
+#                                 either bytes or packets.
+#  -E <error model name>        : The Path error model, either SBER (Simple Bit
+#                                 Error Rate), SPER (Simple Packet Error Rate),
+#                                 or None.
+#  -e=<name>=<value>            : An error model specific parameter.
+#                                 Valid SBER model parameter names are:
+#                                   BER (sets the bit error rate).
+#                                 Valid SPER model parameter names are:
+#                                   PER (sets the packet error rate).
+#
+# You can change the error model, but should do so with care. In particular,
+# setting error rates is model dependent, so if you change the
+# model you need to use the appropriate model-specific parameters.
+#
+# When the experiment starts, LinkEm is started on all LinkEm hosts with no
+# delay and no throttle, i.e., it runs at full rate. The LinkEm instances are
+# updated according to this config file template.
+
+# LinkEmClient executable path.
+LEC_BIN=${HOME}/iron_exp_staging/bin/LinkEmClient

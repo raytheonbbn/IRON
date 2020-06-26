@@ -1,0 +1,37 @@
+digraph sliq_data_can_send {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Loop over each priority from high to low" ];
+    blk2 [ shape = box,     label = "Loop over all streams with priority P\nstarting with next stream for priority P" ];
+    blk3 [ shape = box,     label = "Dequeue data from stream xmit queue\nCreate data pkt for data\nAssign seq num to data pkt\nSet data pkt blocked flag as necessary\nSend data pkt\nIf RTO timer is not started, start RTO timer with RTO duration\nAdd data pkt to stream send window" ];
+    blk4 [ shape = box,     label = "Record next stream with priority P" ];
+    dsc1 [ shape = diamond, label = "Is connection\ncongestion control blocked?" ];
+    dsc2 [ shape = diamond, label = "Is stream xmit\nqueue empty?" ];
+    dsc3 [ shape = diamond, label = "Is stream\nflow control blocked?" ];
+    dsc4 [ shape = diamond, label = "Is connection\ncongestion control blocked?" ];
+
+    strt -> dsc1 [ label = "For a connection" ];
+
+    dsc1 -> done [ label = "Yes" ];
+    dsc1 -> blk1 [ label = "No" ];
+
+    blk1 -> blk2 [ label = "For priority P" ];
+    blk1 -> done [ label = "End of loop" ];
+
+    blk2 -> dsc2 [ label = "For a stream" ];
+    blk2 -> blk1 [ label = "End of loop with\nno data sent" ];
+    blk2 -> blk2 [ label = "End of loop with\ndata sent" ];
+
+    dsc2 -> dsc3 [ label = "No" ];
+    dsc2 -> blk4 [ label = "Yes" ];
+
+    dsc3 -> blk3 [ label = "No" ];
+    dsc3 -> blk4 [ label = "Yes" ];
+
+    blk3 -> blk4;
+
+    blk4 -> dsc4;
+
+    dsc4 -> blk2 [ label = "No" ];
+    dsc4 -> done [ label = "Yes" ];
+}

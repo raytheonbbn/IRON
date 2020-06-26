@@ -1,0 +1,3 @@
+2019-09-30
+Updated version 0.0.1 of the CAT dissector plugin for wireshark to match the
+latest CAT packet object metadata header formats.

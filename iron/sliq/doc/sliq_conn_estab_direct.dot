@@ -1,0 +1,41 @@
+digraph sliq_connection_establishment_direct {
+    strt [ shape = ellipse, label = "Start" ];
+    sduc [ shape = ellipse, label = "SERVER_DATA\nUNCONNECTED" ];
+    sdss [ shape = ellipse, label = "SERVER_DATA\nSENT_SH" ];
+    sdcn [ shape = ellipse, label = "SERVER_DATA\nCONNECTED" ];
+    cduc [ shape = ellipse, label = "CLIENT_DATA\nUNCONNECTED" ];
+    cdsc [ shape = ellipse, label = "CLIENT_DATA\nSENT_CH" ];
+    cdcn [ shape = ellipse, label = "CLIENT_DATA\nCONNECTED" ];
+    cls1 [ shape = ellipse, label = "SERVER_DATA\nCLOSED" ];
+    cls2 [ shape = ellipse, label = "CLIENT_DATA\nCLOSED" ];
+
+    strt -> sduc [ label = "App calls SetupServerDataEndpoint()" ];
+
+    subgraph cluster0 {
+        label = "SERVER_DATA";
+        labeljust = "l";
+        color = blue;
+        sduc -> sdss [ label = "Recv CH\n[Send SH]\n[Start SH timer]" ];
+        sdss -> sdss [ label = "SH timer expires\n[Send SH]" ];
+        sdss -> sdcn [ label = "Recv CC\n[Stop SH timer]" ];
+        sdss -> cls1 [ label = "Close()\n[Stop SH timer]\n[Send ResetConn]" ];
+        sdss -> cls1 [ label = "Recv ResetConn\n[Stop SH timer]" ];
+        sdss -> cls1 [ label = "Too many SHs sent\n[Stop SH timer]" ];
+    }
+
+    strt -> cduc [ label = "App calls SetupClientDataEndpoint()" ];
+
+    subgraph cluster1 {
+        label = "CLIENT_DATA";
+        labeljust = "l";
+        color = red;
+        cduc -> cdsc [ label = "[Send CH]\n[Start CH timer]" ];
+        cdsc -> cdsc [ label = "CH timer expires\n[Send CH]" ];
+        cdsc -> cdcn [ label = "Recv SH\n[Stop CH timer]\n[Send CC]" ];
+        cdsc -> cls2 [ label = "Recv RJ\n[Stop CH timer]" ];
+        cdcn -> cdcn [ label = "Recv SH\n[Send CC]" ];
+        cdsc -> cls2 [ label = "Close()\n[Stop CH timer]\n[Send ResetConn]" ];
+        cdsc -> cls2 [ label = "Recv ResetConn\n[Stop CH timer]" ];
+        cdsc -> cls2 [ label = "Too many CHs sent\n[Stop CH timer]" ];
+    }
+}

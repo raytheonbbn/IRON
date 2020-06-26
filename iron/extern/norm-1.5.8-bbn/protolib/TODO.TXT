@@ -1,0 +1,18 @@
+Protolib is a work in progress.  Its features reflect the current (and past) 
+needs of our research group.  This list is a list of things we might add in 
+the future:
+
+0) Documentation, documentation, documentation!!!  Code documentation and
+   "Developers' Guide" materials.
+   
+1) Generalize the Mutex stuff used in ProtoDispatcher for general purpose
+   thread synchronization purposes ...
+
+2) Make code truly UNICODE compliant ... In particular, any functions which 
+   take/return strings (currently "char*") should instead use "tchar" 
+   types/functions as appropriate.
+   
+
+Brian Adamson
+<adamson@itd.nrl.navy.mil>
+26 June 2017

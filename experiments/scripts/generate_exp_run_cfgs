@@ -1,0 +1,299 @@
+#!/usr/bin/env python
+
+# IRON: iron_headers
+#
+# Distribution A
+#
+# Approved for Public Release, Distribution Unlimited
+#
+# EdgeCT (IRON) Software Contract No.: HR0011-15-C-0097
+# DCOMP (GNAT)  Software Contract No.: HR0011-17-C-0050
+# Copyright (c) 2015-20 Raytheon BBN Technologies Corp.
+#
+# This material is based upon work supported by the Defense Advanced
+# Research Projects Agency under Contracts No. HR0011-15-C-0097 and
+# HR0011-17-C-0050. Any opinions, findings and conclusions or
+# recommendations expressed in this material are those of the author(s)
+# and do not necessarily reflect the views of the Defense Advanced
+# Research Project Agency.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# IRON: end
+
+import os
+import os.path
+import re
+import shutil
+import sys
+
+from optparse import OptionParser
+
+# The default base directory location.
+DEFAULT_BASE_DIR = os.path.join(os.path.expanduser("~"), 'iron_exp_staging')
+
+# The default parameter substitution input file name.
+DEFAULT_PARAM_INPUT_FN = "params.txt"
+
+# The regular expression of interest. We are interested in finding
+# strings that have the following format in the configuration file
+# templates:
+#
+#   %aaa%
+#
+# This string will be replaced by one of the values provided for aaa
+# in the substitution input file. There may be characters in the line
+# before and after the matched pattern. It is possible that there are
+# multiple pattern matches on a single line.
+run_params_reg_ex = re.compile('.+?(%.+?%).*?')
+
+run_params_dict = {}
+
+class BadTagError(Exception):
+    """
+    An exception class for bad tag errors.
+    """
+    def __init__(self, value):
+        Exception.__init__(self, value)
+        self.value = value
+
+    def __str__(self):
+        return str(self.value)
+
+
+def errmsg(msg):
+    """
+    Print an error message string to stderr.
+    """
+    print >> sys.stderr, msg
+
+
+def load_tags(fn):
+    """
+    Load in the experiment parameter substitution information. Raises
+    an IOError exception if the load is not successful. Raises a
+    BadTagError exception if any substitution tags are repeated.
+    """
+    ln = 0
+    num_runs = 0
+
+    # Open the file for reading.
+    with open(fn, 'r') as fd:
+        for line in fd:
+            ln += 1
+            line = line.strip()
+
+            # Skip comment or empty lines.
+            if len(line) < 1 or line.startswith('#'):
+                continue
+
+            # Process line of format "tag = val1 val2 ... valn"
+            [tag, values] = line.split("=")
+            tag = tag.strip()
+            if tag in run_params_dict:
+                raise BadTagError('%s:%d: error: repeated substitution tag '
+                                  '"%s" in experiment parameters input file\n'
+                                  '  %s' % (fn, ln, tag, line))
+
+            run_params_dict[tag] = values.split()
+            if num_runs == 0:
+                num_runs = len(run_params_dict[tag])
+            else:
+                num_values = len(run_params_dict[tag])
+                if num_values != num_runs:
+                    raise BadTagError('%s:%d: error: The substitute tag %s '
+                                      'has a different number of provided '
+                                      'provided values (%d) from expected '
+                                      'number (%d)' % 
+                                      (fn, ln, tag, num_values, num_runs))
+    return num_runs
+
+
+def process_cfg_file(fn, num_runs):
+    """
+    Process a configuration file. The configuration file may have tags
+    specified in it that are to be substituted with the values
+    provided in the tag substitution input file. The end result of
+    this function is the generation of configuration files for N runs,
+    with the appropriate substitutions for the configurable parameters
+    for the experiment runs.
+    """
+    ln = 0
+
+    # Open the configuration file that is to be processed.
+    with open(fn) as f:
+        lines = f.read().splitlines()
+
+        # Process each line from the input file. Search for
+        # replacement strings with the following format: %abc%. If a
+        # replacement string is found, it is replaced with the i'th
+        # value for the 'abc' tag from the tag substitution input
+        # file. The new configuration files, with the required
+        # substitutions, are placed in the run1, run2, run3, ..., runN
+        # directories.
+        for i in range(1, num_runs + 1):
+            # Create the destination directory name.
+            run = "run%d" % (i)
+            directory = os.path.join(os.path.dirname(fn), '..', run, 'cfgs')
+
+            if not os.path.exists(directory):
+                # The destination directory, 'runX', does not yet
+                # exist so create it. Also create the cfgs, logs, and
+                # pcaps subdirectories.
+                logs_dir = os.path.join(os.path.dirname(fn), '..', run, 'logs')
+                pcaps_dir = os.path.join(os.path.dirname(fn), '..', run, 
+                                         'pcaps')
+                os.makedirs(directory)
+                os.makedirs(logs_dir)
+                os.makedirs(pcaps_dir)
+
+            out_fn = os.path.join(directory, os.path.basename(fn))
+
+            # Open the output file.
+            f1 = open(out_fn, "w")
+            for line in lines:
+                ln += 1
+
+                # It is possible that there are 0 or more regular
+                # expression matches for each line. We must handle all
+                # matches.
+                matches = run_params_reg_ex.findall(line)
+                if matches:
+                    for match in matches:
+                        tag = match.strip('%').rstrip('%')
+                        if not tag in run_params_dict:
+                            raise BadTagError('%s:%d: error: tag %s not found in '
+                                              'substitution dictionary\n  %s' % 
+                                              (fn, ln, tag, line))
+                        line = line.replace(match, run_params_dict[tag][i-1])
+
+                # We are finished with all substitutions for the
+                # current line, so we can now write it to the output
+                # file.
+                f1.write(line)
+                f1.write("\n")
+
+
+def copy_file(fn, num_runs):
+    """
+    Copy the file to the experiment run directories.
+    """
+    for i in range(1, num_runs + 1):
+        # Create the destination directory name.
+        run = "run%d" % i
+        directory = os.path.join(os.path.dirname(fn), '..', run, 'cfgs')
+
+        if not os.path.exists(directory):
+            # The destination directory 'runX' does not yet exist so
+            # create it.
+            # The destination directory, 'runX', does not yet
+            # exist so create it. Also create the cfgs, logs, and
+            # pcaps subdirectories.
+            logs_dir = os.path.join(os.path.dirname(fn), '..', run, 'logs')
+            pcaps_dir = os.path.join(os.path.dirname(fn), '..', run, 
+                                         'pcaps')
+            os.makedirs(directory)
+            os.makedirs(logs_dir)
+            os.makedirs(pcaps_dir)
+
+        shutil.copy2(fn, directory)
+
+
+def process_dir(directory, param_input_fn):
+    """
+    Process all of the files in the specified directory.
+    """
+    # Load the tag substitution input file, which contains the
+    # configurable parameters and their values for the experiment
+    # runs.
+    run_params_dict.clear()
+    param_input_fn = os.path.join(directory, param_input_fn)
+    if os.path.isfile(param_input_fn):
+        try:
+            num_runs = load_tags(param_input_fn)
+        except IOError, e:
+            errmsg('%s' % e)
+            sys.exit(1)
+        except BadTagError, e:
+            errmsg('%s' % e)
+            sys.exit(1)
+    else:
+        num_runs = 1
+
+    # Process all of the files in the directory.
+    for file_name in os.listdir(directory):
+        fn = os.path.join(directory, file_name)
+        if os.path.isfile(fn):
+            if fn.endswith("cfg") or fn.endswith(".sh"):
+                copy_file(fn, num_runs)
+                try:
+                    process_cfg_file(fn, num_runs)
+                except BadTagError, e:
+                    errmsg('%s' % e)
+                    sys.exit(1)
+            else:
+                # The current file is not an experiment configuration
+                # file, so simply copy it to the run directories.
+                copy_file(fn, num_runs)
+
+
+def main():
+    """
+    The main function.
+    """
+    # Handle command line arguments.
+    parser = OptionParser('usage: %prog [OPTIONS] [FILE | DIR] ...')
+    parser.add_option('-b', '--basedir', dest='base_dir',
+                      metavar='BASE_DIR', default='_DEFAULT_',
+                      help='Base directory over which to operate '
+                      '[default: %s]' % DEFAULT_BASE_DIR)
+    parser.add_option('-p', '--param-input', dest='param_input_fn',
+                      metavar='PARAM_INPUT_FN', default='_DEFAULT_',
+                      help='Parameter substitution input file name '
+                      '[default: %s]' % DEFAULT_PARAM_INPUT_FN)
+    (options, args) = parser.parse_args()
+
+    # Get the path to the base directory.
+    base_dir = DEFAULT_BASE_DIR
+    if options.base_dir != '_DEFAULT_':
+        base_dir = options.base_dir
+
+    # Expand any '~' or '~user' in the base directory.
+    base_dir = os.path.expanduser(base_dir)
+
+    # Get the parameter substitution input file name.
+    param_input_fn = DEFAULT_PARAM_INPUT_FN
+    if options.param_input_fn != '_DEFAULT_':
+        param_input_fn = options.param_input_fn
+
+    # Loop over all of the specified directories.
+    for arg in args:
+        # Process the directory.
+        directory = os.path.join(base_dir, arg, 'cfgs')
+        if os.path.isdir(directory):
+            process_dir(directory, param_input_fn)
+        else:
+            errmsg('Error: directory %s does not exist' % directory)
+            return 2
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

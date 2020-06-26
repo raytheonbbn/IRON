@@ -1,0 +1,125 @@
+# IRON: iron_headers
+#
+# Distribution A
+#
+# Approved for Public Release, Distribution Unlimited
+#
+# EdgeCT (IRON) Software Contract No.: HR0011-15-C-0097
+# DCOMP (GNAT)  Software Contract No.: HR0011-17-C-0050
+# Copyright (c) 2015-20 Raytheon BBN Technologies Corp.
+#
+# This material is based upon work supported by the Defense Advanced
+# Research Projects Agency under Contracts No. HR0011-15-C-0097 and
+# HR0011-17-C-0050. Any opinions, findings and conclusions or
+# recommendations expressed in this material are those of the author(s)
+# and do not necessarily reflect the views of the Defense Advanced
+# Research Project Agency.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# IRON: end
+#
+# IRON uses one bin for each enclave. BinIds are used as unique identifiers
+# for the enclaves that must be universally understood by all enclaves. BinIds
+# are carried on the wire in backpressure signaling protocol packets.
+#
+# Enclaves are divided into two types: destination enclaves and interior
+# enclaves. Destination enclaves are those with attached application networks.
+# Interior enclaves are those without any attached application networks.
+# Application packets are always forwarded to destination enclaves, never to
+# interior enclaves. Each destination enclave definition includes a list of
+# subnet masks, called HostMasks, for all of the attached application
+# networks. Interior enclaves have no HostMasks in their definitions.
+#
+# BinIds do not need to be consecutive, but they must be within the ranges
+# specified by common/include/iron_constants.h. Specifically, destination
+# enclave BinIds must be in the range 0 to kMaxUcastBinId, and interior
+# enclave BinIds must be in the range 0 to kMaxBinId. Both of these BinIds
+# must be representable by the type BinId defined in
+# common/include/iron_types.h.
+#
+# The maximum number of bins (enclaves) supported by IRON is specified in
+# common/include/iron_constants.h. The maximum number of destination enclaves
+# is kMaxNumDests, while the maximum number of interior enclaves is
+# kMaxNumIntNodes.
+#
+# Multicast packets are application packets that are destined to one or more
+# destination enclaves. Each multicast group consists of the multicast IPv4
+# address used as the destination address in these packets, and the list of
+# destination enclave BinIds that the packets should be forwarded to. Each
+# multicast group is assigned a McastId instead of a BinId. The McastId is
+# automatically generated from the multicast IPv4 address at run time, so it
+# is not specified in this configuration file. The McastId type is defined in
+# common/include/iron_types.h. The maximum number of multicast groups that may
+# be defined is kMaxNumMcastGroups, as specified in
+# common/include/iron_constants.h.
+#
+# The multicast group 224.77.77.77 is automatically used for sending GRAM
+# packets between enclaves when GRAMs are enabled in the backpressure
+# forwarder.
+#
+# If any of the above configuration rules are broken, the system will abort
+# with a fatal log message during start up.
+#
+# This is an example BinMap configuration file. It should be modified to
+# support the desired system configuration. Following is a description of the
+# values that are provided during the configuration of the BinMap.
+#
+# BinMap.BinIds               : Comma separated list of unicast destination
+#                               BinIds for destination enclaves. The default
+#                               value is: "". 0 is a valid BinId. These BinIds
+#                               cannot exceed kMaxUcastBinId as defined in
+#                               iron_constants.h. Each BinId listed here must
+#                               have a corresponding "x.HostMasks" parameter,
+#                               with "x" being the BinId value.
+# BinMap.BinId.x.HostMasks    : Comma separated list of host masks associated
+#                               with destination enclave BinId "x". An example
+#                               is: 192.168.1.0/24,10.1.1.0/24. If a '/num'
+#                               prefix length is not provided, then '/32' is
+#                               assigned. The default value is: "". This
+#                               defines the attached application network IPv4
+#                               addresses that are part of this destination
+#                               enclave and are used to determine when packets
+#                               have reached their destination enclave (and
+#                               thus should be pulled out of backpressure
+#                               forwarding and delivered to the proxies).
+# BinMap.IntBinIds            : Comma separated list of interior enclave
+#                               BinIds. The default value is: "". 0 is a valid
+#                               BinId. These BinIds cannot exceed kMaxBinId as
+#                               defined in iron_constants.h.
+# BinMap.NumMcastGroups       : The number of multicast groups. The default
+#                               value is: "0". Each multicast group is defined
+#                               using ".y.Addr" and ".y.Members" parameters,
+#                               with "y" being a monotonic increasing counter
+#                               from 0 to the number of multicast groups minus
+#                               one.
+# BinMap.McastGroup.y.Addr    : The multicast IPv4 destination address
+#                               associated with the "y"th multicast group in
+#                               dot-decimal notations.  An example is:
+#                               224.4.8.12
+# BinMap.McastGroup.y.Members : Comma separated list of multicast group
+#                               member unicast destination bin ids associated
+#                               with the "y"th . An example
+#                               is: 0,1,2,3.
+
+BinMap.BinIds                1,2,3
+BinMap.BinId.1.HostMasks     $enclave1_iron_lan_subnet/24$
+BinMap.BinId.2.HostMasks     $enclave2_iron_lan_subnet/24$
+BinMap.BinId.3.HostMasks     $enclave3_iron_lan_subnet/24$
+

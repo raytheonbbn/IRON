@@ -1,0 +1,20 @@
+emuHAIPE has a number of settable options. You can type "./emuHAIPE -h" to get
+a listing, however the best place to see the various configuration options is
+int the example configuartion file emuHaipe.cfg included in this directory.
+
+The emulator assumes otherwise quite reasonable default values for 
+the set of parameters, but if you don't like or can't use the default 
+settings, you can override them either with command line parameters or change 
+them in a properties file and give the name of the property file 
+to emuNet (./emuHAIPE -P filename).
+
+Or both. Command line options have precedence over the same
+settings in the property file when both are defined.
+
+An example properties file is provide (emuHaipe.cfg), which documents
+all of the currently configurable parameters in the provided code.
+The emuNet.cfg file is probably the best current source for descriptions
+of the various parameters (-h only provides a summary listing).
+
+More documentation to follow.
+

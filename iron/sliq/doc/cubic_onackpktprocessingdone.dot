@@ -1,0 +1,43 @@
+digraph sliq_cubic_onackpktprocessingdone {
+    redy [ shape = ellipse, label = "Ready" ];
+    blk1 [ shape = box,     label = "Set cwnd = ssthresh\nSet in_fr = false" ];
+    blk2 [ shape = box,     label = "PRR reset\nUpdate ssthresh using Cubic rules\nSet in_fr = true\nSet FR window" ];
+    blk3 [ shape = box,     label = "PRR update for ACK" ];
+    blk4 [ shape = box,     label = "HSS ACK train update" ];
+    blk5 [ shape = box,     label = "HSS reset" ];
+    blk6 [ shape = box,     label = "Set cwnd = (cwnd + MIN(acked_bytes, MSS))" ];
+    blk7 [ shape = box,     label = "Increase cwnd using Cubic rules" ];
+    dsc1 [ shape = diamond, label = "Is in_fr == true?" ];
+    dsc2 [ shape = diamond, label = "Is next_exp_seq\nbeyond FR window?" ];
+    dsc3 [ shape = diamond, label = "Is enter_fr == true AND\nnext_exp_seq beyond last\nFR window?" ];
+    dsc4 [ shape = diamond, label = "Is in_fr == true?" ];
+    dsc5 [ shape = diamond, label = "Is cwnd < ssthresh AND\ncwnd >= HSS_low_window?" ];
+    dsc6 [ shape = diamond, label = "Is [cwnd < ssthresh AND\ncwnd < (2 * max_bif_per_rtt)] OR\n[cwnd >= ssthresh AND\npre_ack_bif >= cwnd]?" ];
+    dsc7 [ shape = diamond, label = "Is cwnd < ssthresh?" ];
+    dsc8 [ shape = diamond, label = "Is end of HSS period reached?" ];
+
+    redy -> dsc1 [ label = "OnAckPktProcessingDone" ];
+    dsc1 -> dsc2 [ label = "Yes" ];
+    dsc1 -> dsc3 [ label = "No" ];
+    dsc2 -> blk1 [ label = "Yes" ];
+    dsc2 -> dsc4 [ label = "No" ];
+    dsc3 -> blk2 [ label = "Yes" ];
+    dsc3 -> dsc4 [ label = "No" ];
+    blk1 -> dsc4;
+    blk2 -> dsc4;
+    dsc4 -> blk3 [ label = "Yes" ];
+    dsc4 -> dsc5 [ label = "No" ];
+    blk3 -> redy;
+    dsc5 -> blk4 [ label = "Yes" ];
+    dsc5 -> dsc6 [ label = "No" ];
+    blk4 -> dsc6;
+    dsc6 -> redy [ label = "Yes" ];
+    dsc6 -> dsc7 [ label = "No" ];
+    dsc7 -> dsc8 [ label = "Yes" ];
+    dsc7 -> blk7 [ label = "No" ];
+    dsc8 -> blk5 [ label = "Yes" ];
+    dsc8 -> blk6 [ label = "No" ];
+    blk5 -> blk6;
+    blk6 -> redy;
+    blk7 -> redy;
+}

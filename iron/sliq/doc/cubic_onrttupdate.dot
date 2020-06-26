@@ -1,0 +1,18 @@
+digraph sliq_cubic_onrttupdate {
+    redy [ shape = ellipse, label = "Ready" ];
+    blk1 [ shape = box,     label = "Update HSS" ];
+    blk2 [ shape = box,     label = "Set ssthresh = cwnd" ];
+    dsc1 [ shape = diamond, label = "Is time since FR < 1 second?" ];
+    dsc2 [ shape = diamond, label = "Is cwnd < ssthresh?" ];
+    dsc3 [ shape = diamond, label = "Does HSS allow exiting SS?" ];
+
+    redy -> dsc1 [ label = "OnRttUpdate" ];
+    dsc1 -> redy [ label = "Yes" ];
+    dsc1 -> dsc2 [ label = "No" ];
+    dsc2 -> blk1 [ label = "Yes" ];
+    dsc2 -> redy [ label = "No" ];
+    blk1 -> dsc3;
+    dsc3 -> blk2 [ label = "Yes" ];
+    dsc3 -> redy [ label = "No" ];
+    blk2 -> redy;
+}

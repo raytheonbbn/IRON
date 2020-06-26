@@ -1,0 +1,48 @@
+digraph sliq_congestion_control {
+    strt [ shape = ellipse, label = "Start" ];
+    redy [ shape = ellipse, label = "Ready" ];
+    init [ shape = box,     label = "Set cwnd = (2 * MSS)\nSet ssthresh = (6 * MSS)\nSet bif = 0\nSet in_fr = false" ];
+    blk1 [ shape = box,     label = "Allow data pkt to be sent\nSet bif = (bif + data pkt size)" ];
+    blk2 [ shape = box,     label = "Set ssthresh = cwnd" ];
+    blk3 [ shape = box,     label = "Set in_fr = false" ];
+    blk4 [ shape = box,     label = "Set bif = (bif - data pkt size)\nMaybe increase cwnd" ];
+    blk5 [ shape = box,     label = "Reduce cwnd\nSet ssthresh = cwnd\nSet in_fr = true\nRecord fast recovery window" ];
+    blk6 [ shape = box,     label = "Set in_fr = false\nSet ssthresh = (cwnd / 2)\nSet cwnd = (2 * MSS)" ];
+    dsc1 [ shape = diamond, label = "Is in_fr == true?" ];
+    dsc2 [ shape = diamond, label = "Does PRR\nallow send?" ];
+    dsc3 [ shape = diamond, label = "Is cwnd > bif?" ];
+    dsc4 [ shape = diamond, label = "Is cwnd < ssthresh AND\nHSS allows exiting SS?" ];
+    dsc5 [ shape = diamond, label = "Is in_fr == true AND\nACK next exp seq\nbeyond FR window?" ];
+    dsc6 [ shape = diamond, label = "Is in_fr == true" ];
+
+    strt -> init;
+    init -> redy;
+
+    redy -> dsc1 [ label = "Check if data pkt can be sent" ];
+    dsc1 -> dsc2 [ label = "Yes" ];
+    dsc1 -> dsc3 [ label = "No" ];
+    dsc2 -> dsc3 [ label = "Yes" ];
+    dsc2 -> redy [ label = "No" ];
+    dsc3 -> blk1 [ label = "Yes" ];
+    dsc3 -> redy [ label = "No" ];
+    blk1 -> redy
+
+    redy -> dsc4 [ label = "RTT Update" ];
+    dsc4 -> blk2 [ label = "Yes" ];
+    dsc4 -> redy [ label = "No" ];
+    blk2 -> redy;
+
+    redy -> dsc5 [ label = "Data pkt ACKed" ];
+    dsc5 -> blk3 [ label = "Yes" ];
+    dsc5 -> blk4 [ label = "No" ];
+    blk3 -> blk4;
+    blk4 -> redy;
+
+    redy -> dsc6 [ label = "Data pkt lost" ];
+    dsc6 -> redy [ label = "Yes" ];
+    dsc6 -> blk5 [ label = "No" ];
+    blk5 -> redy;
+
+    redy -> blk6 [ label = "RTO timer expires" ];
+    blk6 -> redy;
+}

@@ -1,0 +1,15 @@
+# Multicast groups: groupId [dst_node_numbers] 
+#     (must be defined before referenced in a traffic line)
+0 [0 6 7]
+1 [0 5 6]
+2 [5 6 7]
+3 [0 7 5]
+
+#
+# src dst startTime stopTime utilFnType maxRate aVal bVal mVal pVal tVal
+#    if "m" preceeds the second value, it refers to a multicast group
+5  m0 0.0 100.0 log 100000000 1 1 100000000 1 20
+7  m1 0.0 100.0 log 100000000 1 1 100000000 1 20
+0  m2 0.0 100.0 log 100000000 1 1 100000000 1 20
+6  m3 0.0 100.0 log 100000000 1 1 100000000 1 20
+

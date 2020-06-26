@@ -1,0 +1,27 @@
+digraph sliq_window_size {
+    strt [ shape = ellipse, label = "Start" ];
+    redy [ shape = ellipse, label = "Ready" ];
+    init [ shape = box,     label = "Set allow_blocked = true\nSet blocked_seq = 0\nSet win_size = INIT_WIN_SIZE" ];
+    blk1 [ shape = box,     label = "Set allow_blocked = true" ];
+    blk2 [ shape = box,     label = "Set win_size = min((2 * win_size), MAX_WIN_SIZE)\n" ];
+    blk3 [ shape = box,     label = "Set allow_blocked = false\nSet blocked_seq = (data pkt seq + win_size - 1)" ];
+    dsc1 [ shape = diamond, label = "Is allow_blocked == false AND\ndata pkt seq > blocked_seq?" ];
+    dsc2 [ shape = diamond, label = "Is data pkt blocked flag set AND\nallow_blocked == true?" ];
+    dsc3 [ shape = diamond, label = "Is window size auto\ntune option enabled?" ];
+
+    strt -> init;
+    init -> redy;
+    redy -> dsc1 [ label = "Recv data pkt" ];
+
+    dsc1 -> blk1 [ label = "Yes" ];
+    blk1 -> dsc2;
+    dsc1 -> dsc2 [ label = "No" ];
+
+    dsc2 -> redy [ label = "No" ];
+    dsc2 -> dsc3 [ label = "Yes" ];
+
+    dsc3 -> blk2 [ label = "Yes" ];
+    blk2 -> blk3;
+    dsc3 -> blk3 [ label = "No" ];
+    blk3 -> redy;
+}

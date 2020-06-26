@@ -1,0 +1,1 @@
+Baseline Total,enp0s31f6,(src 10.13.3.2 and (dst port 30901 or 30902 or 30903 or 30904 or 30905 or 30906 or 30907 or 30908 or 30909 or 30912 or 30912 or 30976 or 30986)) or (tcp port 8088)

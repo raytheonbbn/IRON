@@ -1,0 +1,51 @@
+BEGIN goodput
+flow 1 zone 1 mean 4872.722222 std 131.150128 len 90
+flow 1 zone 2 mean 1442.827957 std 75.186882 len 93
+flow 1 zone 3 mean 4858.638889 std 70.487254 len 144
+flow 2 zone 1 mean 9658.055556 std 653.725127 len 90
+flow 2 zone 2 mean 7269.440860 std 90.863535 len 93
+flow 2 zone 3 mean 9728.125000 std 146.252487 len 144
+END goodput
+
+BEGIN latency
+flow 1 zone 1 mean 0.005769 std 0.001695 len 90
+flow 1 zone 2 mean 0.031019 std 0.005223 len 93
+flow 1 zone 3 mean 0.005384 std 0.000229 len 144
+flow 2 zone 1 mean 0.111247 std 0.033345 len 90
+flow 2 zone 2 mean 0.041399 std 0.005367 len 93
+flow 2 zone 3 mean 0.050238 std 0.000975 len 144
+END latency
+
+CONVERGENCE TIMES goodput
+flow 1 zone 1 converges: 0.1
+flow 1 zone 2 converges: 0.21638712883
+flow 1 zone 3 converges: 4.06898398399
+flow 2 zone 1 converges: 0.2
+flow 2 zone 2 converges: 0.21638712883
+flow 2 zone 3 converges: 2.06898398399
+
+CONVERGENCE TIMES latency
+flow 1 zone 1 converges: 0.1
+flow 1 zone 2 converges: 4.91638712883
+flow 1 zone 3 converges: 4.06898398399
+flow 2 zone 1 converges: 0.1
+flow 2 zone 2 converges: 4.51638712883
+flow 2 zone 3 converges: 3.96898398399
+
+ ok flow 1 zone 1 avg/exp 1.001736
+ ok flow 1 zone 2 avg/exp 1.004014
+ ok flow 1 zone 3 avg/exp 0.992430
+ ok flow 2 zone 1 avg/exp 1.000956
+ ok flow 2 zone 2 avg/exp 1.000171
+ ok flow 2 zone 3 avg/exp 1.000513
+ ok flow 1 zone 1 dev/avg 0.026915
+ ok flow 1 zone 2 dev/avg 0.052111
+ ok flow 1 zone 3 dev/avg 0.014508
+ ok flow 2 zone 1 dev/avg 0.067687
+ ok flow 2 zone 2 dev/avg 0.012499
+ ok flow 2 zone 3 dev/avg 0.015034
+ ok interflow ratio 2/1 zone 2 5.038328
+ ok flow 1 zone 1 latency 0.005769 limit 0.040000
+ ok flow 1 zone 2 latency 0.031019 limit 0.040000
+ ok flow 1 zone 3 latency 0.005384 limit 0.040000
+PASS tests 16 fail 0

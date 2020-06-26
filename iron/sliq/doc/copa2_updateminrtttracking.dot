@@ -1,0 +1,42 @@
+digraph sliq_copa2_updateminrtttracking {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set min_rtt_tracking.ist[min_rtt_tracking.next_ist] = ist\nSet min_rtt_tracking.next_ist = ((min_rtt_tracking.next_ist + 1) % MRT_NUM_IST)" ];
+    blk2 [ shape = box,     label = "Set min_rtt_tracking.min_rtt[min_rtt_tracking.next_min_rtt] = min_rtt_tracking.recent_min_rtt\nSet min_rtt_tracking.recent_min_rtt = HUGE_RTT\nSet min_rtt_tracking.next_min_rtt = ((min_rtt_tracking.next_min_rtt + 1) % MRT_NUM_PERIODS)\nSet min_rtt_tracking.min_rtt_count = min((min_rtt_tracking.min_rtt_count + 1), MRT_NUM_PERIODS)" ];
+    blk3 [ shape = box,     label = "Set oldest_cand = min_rtt_tracking.min_rtt[min_rtt_tracking.next_min_rtt]\nSet cand = min(all but oldest element in min_rtt_tracking.min_rtt)" ];
+    blk4 [ shape = box,     label = "Set cand = min(cand, oldest_cand)" ];
+    blk5 [ shape = box,     label = "Set min_rtt = cand" ];
+    blk6 [ shape = box,     label = "Set cwnd = MIN_CWND\nSet ist = (min_rtt / cwnd)" ];
+    blk7 [ shape = box,     label = "Set cwnd = (min_rtt / min_rtt_tracking.ist[min_rtt_tracking.next_ist])\nSet ist = min_rtt_tracking.ist[min_rtt_tracking.next_ist]" ];
+    blk8 [ shape = box,     label = "Set delta = DEFAULT_DELTA\nSet velocity = 1\nSet cwnd_adj_up = 0\nSet cwnd_adj_down = 0\nSet vel_prev_direction = DIR_NEITHER\nSet damper.state = MONITOR_HIGH\nSet damper.hold_cnt = 0" ];
+    blk9 [ shape = box,     label = "Set min_rtt_tracking.prev_update_time = ack_time" ];
+    dsc1 [ shape = diamond, label = "Is (ack_time - min_rtt_tracking.prev_update_time) >=\n MRT_MIN_PERIOD?" ];
+    dsc2 [ shape = diamond, label = "Is min_rtt_tracking.recent_min_rtt <\n HUGE_RTT?" ];
+    dsc3 [ shape = diamond, label = "Is min_rtt_tracking.min_rtt_count ==\n MRT_NUM_PERIODS?" ];
+    dsc4 [ shape = diamond, label = "Is oldest_cand > (min_rtt + (0.6 * (cand - min_rtt))) OR\noldest_cand < (min_rtt + (0.4 * (cand - min_rtt)))?" ];
+    dsc5 [ shape = diamond, label = "Is cand > (MRT_RATIO * min_rtt) AND\ncand > (min_rtt + MRT_AMOUNT)?" ];
+    dsc6 [ shape = diamond, label = "Is min_rtt < MRT_RESET_THRES?" ];
+
+    strt -> dsc1 [ label = "UpdateMinRttTracking(ack_time)" ];
+    dsc1 -> blk1 [ label = "Yes" ];
+    dsc1 -> done [ label = "No" ];
+    blk1 -> dsc2;
+    dsc2 -> blk2 [ label = "Yes" ];
+    dsc2 -> blk9 [ label = "No" ];
+    blk2 -> dsc3;
+    dsc3 -> blk3 [ label = "Yes" ];
+    dsc3 -> blk9 [ label = "No" ];
+    blk3 -> dsc4;
+    dsc4 -> blk4 [ label = "Yes" ];
+    dsc4 -> dsc5 [ label = "No" ];
+    blk4 -> dsc5;
+    dsc5 -> blk5 [ label = "Yes" ];
+    dsc5 -> blk9 [ label = "No" ];
+    blk5 -> dsc6;
+    dsc6 -> blk6 [ label = "Yes" ];
+    dsc6 -> blk7 [ label = "No" ];
+    blk6 -> blk8;
+    blk7 -> blk8;
+    blk8 -> blk9;
+    blk9 -> done;
+}

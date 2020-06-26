@@ -1,0 +1,23 @@
+digraph sliq_copa3_damperonpktsent {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set hold_cnt = hold_cnt + 1" ];
+    blk2 [ shape = box,     label = "Set state = WAIT" ];
+    blk3 [ shape = box,     label = "Set state = MONITOR_HIGH" ];
+    blk4 [ shape = box,     label = "Set hold_cnt = 0" ];
+    dsc1 [ shape = diamond, label = "Is state == HOLD OR\nstate == WAIT?" ];
+    dsc2 [ shape = diamond, label = "Is hold_cnt > cur_cwnd?" ];
+    dsc3 [ shape = diamond, label = "Is state == HOLD?" ];
+
+    strt -> dsc1 [ label = "DamperOnPktSent(cur_cwnd)" ];
+    dsc1 -> blk1 [ label = "Yes" ];
+    dsc1 -> done [ label = "No" ];
+    blk1 -> dsc2;
+    dsc2 -> dsc3 [ label = "Yes" ];
+    dsc2 -> done [ label = "No" ];
+    dsc3 -> blk2 [ label = "Yes" ];
+    dsc3 -> blk3 [ label = "No" ];
+    blk2 -> blk4;
+    blk3 -> blk4;
+    blk4 -> done;
+}

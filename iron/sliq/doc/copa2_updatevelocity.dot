@@ -1,0 +1,37 @@
+digraph sliq_copa2_updatevelocity {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set direction = DIR_NEITHER" ];
+    blk2 [ shape = box,     label = "Set thres = (2.0 * (cwnd_adj_up + cwnd_adj_down) / 3.0)" ];
+    blk3 [ shape = box,     label = "Set direction = DIR_UP" ];
+    blk4 [ shape = box,     label = "Set direction = DIR_DOWN" ];
+    blk5 [ shape = box,     label = "Set vel_same_direction_cnt = vel_same_direction_cnt + 1" ];
+    blk6 [ shape = box,     label = "Set velocity = 2 * velocity" ];
+    blk7 [ shape = box,     label = "Set vel_same_direction_cnt = 0\nSet velocity = 1" ];
+    blk8 [ shape = box,     label = "Set cwnd_adj_up = 0\nSet cwnd_adj_down = 0\nSet vel_prev_direction = direction\nSet vel_cc_seq = nxt_cc_seq" ];
+    dsc1 [ shape = diamond, label = "Is (cwnd_adj_up + cwnd_adj_down) > 0?" ];
+    dsc2 [ shape = diamond, label = "Is cwnd_adj_up >= thres?" ];
+    dsc3 [ shape = diamond, label = "Is cwnd_adj_down >= thres?" ];
+    dsc4 [ shape = diamond, label = "Is vel_prev_direction != DIR_NEITHER AND\ndirection == vel_prev_direction?" ];
+    dsc5 [ shape = diamond, label = "Is velocity == 1 AND\nvel_same_direction_cnt < 3?" ];
+
+    strt -> blk1 [ label = "UpdateVelocity" ];
+    blk1 -> dsc1;
+    dsc1 -> blk2 [ label = "Yes" ];
+    dsc1 -> blk7 [ label = "No" ];
+    blk2 -> dsc2;
+    dsc2 -> blk3 [ label = "Yes" ];
+    dsc2 -> dsc3 [ label = "No" ];
+    blk3 -> dsc4;
+    dsc3 -> blk4 [ label = "Yes" ];
+    dsc3 -> dsc4 [ label = "No" ];
+    blk4 -> dsc4;
+    dsc4 -> dsc5 [ label = "Yes" ];
+    dsc4 -> blk7 [ label = "No" ];
+    dsc5 -> blk5 [ label = "Yes" ];
+    dsc5 -> blk6 [ label = "No" ];
+    blk5 -> blk8;
+    blk6 -> blk8;
+    blk7 -> blk8;
+    blk8 -> done;
+}

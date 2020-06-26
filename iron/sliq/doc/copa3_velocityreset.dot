@@ -1,0 +1,8 @@
+digraph sliq_copa3_velocityreset {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set prev_direction = NEITHER\nSet same_direction_cnt = 0\nSet start_cc_seq = next_cc_seq\nSet start_cwnd = cur_cwnd\nSet start_cwnd_increasing = cwnd_increasing\nSet result_velocity = 1" ];
+
+    strt -> blk1 [ label = "VelocityReset(next_cc_seq, cur_cwnd,\ncwnd_increasing, result_velocity)" ];
+    blk1 -> done;
+}

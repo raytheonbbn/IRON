@@ -1,0 +1,302 @@
+// IRON: iron_headers
+/*
+ * Distribution A
+ *
+ * Approved for Public Release, Distribution Unlimited
+ *
+ * EdgeCT (IRON) Software Contract No.: HR0011-15-C-0097
+ * DCOMP (GNAT)  Software Contract No.: HR0011-17-C-0050
+ * Copyright (c) 2015-20 Raytheon BBN Technologies Corp.
+ *
+ * This material is based upon work supported by the Defense Advanced
+ * Research Projects Agency under Contracts No. HR0011-15-C-0097 and
+ * HR0011-17-C-0050. Any opinions, findings and conclusions or
+ * recommendations expressed in this material are those of the author(s)
+ * and do not necessarily reflect the views of the Defense Advanced
+ * Research Project Agency.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+/* IRON: end */
+
+#include "trap_admission_controller.h"
+#include "list.h"
+#include "string_utils.h"
+#include "udp_proxy.h"
+
+using ::iron::FlowState;
+using ::iron::List;
+using ::iron::QueueDepths;
+using ::iron::StringUtils;
+using ::iron::Time;
+using ::iron::TrapUtility;
+using ::std::string;
+namespace
+{
+  const char*  kClassName = "TrapAdmissionController";
+}
+
+//============================================================================
+TrapAdmissionController::TrapAdmissionController(
+  EncodingState& encoding_state)
+    : AdmissionController(encoding_state),
+      trap_utility_(NULL),
+      restart_time_(Time::Infinite()),
+      step_time_(Time::Infinite()),
+      check_utility_time_(Time::Infinite()),
+      rng_()
+{
+}
+
+//============================================================================
+TrapAdmissionController::~TrapAdmissionController()
+{
+  if (trap_utility_ != NULL)
+  {
+    delete trap_utility_;
+    trap_utility_ = NULL;
+  }
+}
+
+//============================================================================
+bool TrapAdmissionController::CreateUtilityFn(string& utility_def,
+                                              uint32_t flow_id,
+                                              QueueDepths& queue_depths)
+{
+  // Validate that the provided utility definition string is for the Trap
+  // utility function.
+  if (GetUtilityFnType(utility_def, flow_id) != "TRAP")
+  {
+    LogW(kClassName, __func__, "fid: %" PRIu32 ", utility definition is not "
+         "for a Trap utility function.\n", flow_id);
+    return false;
+  }
+
+  trap_utility_ = new (std::nothrow) TrapUtility(queue_depths,
+                                                 encoding_state_.bin_idx(),
+                                                 encoding_state_.k_val(),
+                                                 flow_id);
+  if (trap_utility_ == NULL)
+  {
+    LogF(kClassName, __func__, "fid: %" PRIu32 "Unable to allocate memory "
+         "for Trap utility function.\n", flow_id);
+    return false;
+  }
+
+  ConfigureUtilityFn(trap_utility_, utility_def);
+
+  ScheduleStepTime();
+  ScheduleCheckUtilityTime();
+
+  return true;
+}
+
+//============================================================================
+void TrapAdmissionController::SvcEvents(Time& now)
+{
+  // First, service the admission event.
+  SvcAdmissionEvent(now, trap_utility_);
+
+  // Now, service the trap admission controller specific events.
+  if (restart_time_ <= now)
+  {
+    RestartTimeout(now);
+  }
+
+  if (step_time_ <= now)
+  {
+    StepTimeout(now);
+  }
+
+  if (check_utility_time_ <= now)
+  {
+    CheckUtilityTimeout(now);
+  }
+}
+
+//============================================================================
+double TrapAdmissionController::ComputeUtility(double rate)
+{
+  if (trap_utility_ == NULL)
+  {
+    return 0.0;
+  }
+
+  return trap_utility_->ComputeUtility(rate);
+}
+
+//============================================================================
+void TrapAdmissionController::set_flow_state(iron::FlowState flow_state)
+{
+  if (trap_utility_ == NULL)
+  {
+    // If we get here and don't have a utility function something is very very
+    // wrong.
+    LogF(kClassName, __func__, "Attempting to set the flow's state and there "
+         "isn't a utility function.\n");
+    return;
+  }
+
+  Time  now = Time::Now();
+
+  if ((flow_state == iron::FLOW_OFF) || (flow_state == iron::FLOW_TRIAGED))
+  {
+    CancelScheduledEvent(next_admission_time_);
+    CancelScheduledEvent(step_time_);
+    CancelScheduledEvent(check_utility_time_);
+
+    if (flow_state == iron::FLOW_OFF)
+    {
+      trap_utility_->ResetInertia();
+      CancelScheduledEvent(restart_time_);
+    }
+
+    if ((flow_state == iron::FLOW_TRIAGED) &&
+        (trap_utility_->flow_state() == iron::FLOW_ON))
+    {
+      ScheduleRestartTime();
+    }
+  }
+  else if (flow_state == iron::FLOW_ON)
+  {
+    start_time_          = now;
+    next_admission_time_ = now;
+    ScheduleStepTime();
+    ScheduleCheckUtilityTime();
+    CancelScheduledEvent(restart_time_);
+  }
+
+  trap_utility_->set_flow_state(flow_state);
+}
+
+//============================================================================
+FlowState TrapAdmissionController::flow_state()
+{
+  if (trap_utility_ == NULL)
+  {
+    return iron::UNDEFINED;
+  }
+
+  return trap_utility_->flow_state();
+}
+
+//============================================================================
+double TrapAdmissionController::priority()
+{
+  if (trap_utility_ == NULL)
+  {
+    return 0.0;
+  }
+
+  return trap_utility_->priority();
+}
+
+//============================================================================
+void TrapAdmissionController::UpdateUtilityFn(std::string key_val)
+{
+  List<string>  tokens;
+  StringUtils::Tokenize(key_val, ":", tokens);
+  if (tokens.size() != 2)
+  {
+    LogE(kClassName, __func__, "Parameter %s must be of the form key:value.\n",
+                                key_val.c_str());
+    return;
+  }
+
+  string key;
+  string value;
+  tokens.Peek(key);
+  tokens.PeekBack(value);
+  if (key == "delta")
+  {
+    trap_utility_->set_delta(StringUtils::GetDouble(value));
+    LogD(kClassName, __func__, "New delta: %s.\n", value.c_str());
+  }
+  else if (key == "p")
+  {
+    trap_utility_->set_priority(StringUtils::GetDouble(value,0.0));
+  }
+  else
+  {
+    LogE(kClassName, __func__, "Update of %s not supported.\n", key.c_str());
+  }
+}
+
+//============================================================================
+void TrapAdmissionController::RestartTimeout(Time& now)
+{
+  // Turn the flow on. All packets in the backlog are flushed because they are
+  // old.
+  trap_utility_->SetFlowOn();
+  trap_utility_->ResetInertia();
+  encoding_state_.FlushBacklog();
+
+  // Adjust next admission time to be now. We are turning the flow back on so
+  // we can send any packets that are in the proxy queue.
+  next_admission_time_ = now;
+  SvcAdmissionEvent(now, trap_utility_);
+
+  // Adjust the event timers.
+  ScheduleCheckUtilityTime();
+  ScheduleStepTime();
+  CancelScheduledEvent(restart_time_);
+}
+
+//============================================================================
+void TrapAdmissionController::StepTimeout(Time& now)
+{
+  trap_utility_->Step();
+  ScheduleStepTime();
+}
+
+//============================================================================
+void TrapAdmissionController::CheckUtilityTimeout(Time& now)
+{
+  if (trap_utility_->CheckUtility())
+  {
+    // The flow is not being properly serviced and should be triaged.
+    //
+    //   - Cancel step and utility check events
+    //   - Schedule the restart event
+    CancelScheduledEvent(step_time_);
+    CancelScheduledEvent(check_utility_time_);
+    ScheduleRestartTime();
+  }
+}
+
+//============================================================================
+void TrapAdmissionController::ScheduleStepTime()
+{
+  step_time_ = Time::Now() +
+    Time::FromUsec(trap_utility_->step_interval_us() + rng_.GetInt(trap_utility_->step_interval_us()*0.25));
+}
+
+//============================================================================
+void TrapAdmissionController::ScheduleCheckUtilityTime()
+{
+  check_utility_time_ = Time::Now() +
+    Time::FromUsec(trap_utility_->avg_interval_usec());
+}
+
+//============================================================================
+void TrapAdmissionController::ScheduleRestartTime()
+{
+  restart_time_ = Time::Now() +
+    Time::FromUsec(trap_utility_->restart_interval_us());
+}

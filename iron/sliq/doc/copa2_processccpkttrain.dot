@@ -1,0 +1,34 @@
+digraph sliq_copa2_processccpkttrain {
+    redy [ shape = ellipse, label = "Ready" ];
+    blk1 [ shape = box,     label = "Set pair = (hdr.pt_seq_num / 2)\nSet irt = 0" ];
+    blk2 [ shape = box,     label = "Set fast_startup.pair_recv_time[pair] = rcv_time" ];
+    blk3 [ shape = box,     label = "Set irt = (rcv_time - fast_startup.pair_recv_time[pair])" ];
+    blk4 [ shape = box,     label = "Send FS_ACK packet with hdr.pt_irt set to irt" ];
+    blk5 [ shape = box,     label = "Set fast_startup.rtt[pair] = (rcv_time - fast_startup.pair_send_time[pair])" ];
+    blk6 [ shape = box,     label = "Set fast_startup.rate[pair] = (1.0 / hdr.pt_irt)" ];
+    blk7 [ shape = box,     label = "Stop timer fast_startup.timer\nDo FsDoneCallback state machine" ];
+    dsc1 [ shape = diamond, label = "Is hdr.pt_pkt_type == FS_DATA?" ];
+    dsc2 [ shape = diamond, label = "Is (hdr.pt_seq_num % 2) == 0?" ];
+    dsc3 [ shape = diamond, label = "Is state == FAST_STARTUP?" ];
+    dsc4 [ shape = diamond, label = "Is (hdr.pt_seq_num % 2) == 0?" ];
+    dsc5 [ shape = diamond, label = "Is hdr.pt_seq_num == ((2 * FS_PAIRS) - 1)?" ];
+
+    redy -> blk1 [ label = "ProcessCcPktTrain(rcv_time, hdr)" ];
+    blk1 ->dsc1;
+    dsc1 -> dsc2 [ label = "Yes" ];
+    dsc1 -> dsc3 [ label = "No" ];
+    dsc2 -> blk2 [ label = "Yes" ];
+    dsc2 -> blk3 [ label = "No" ];
+    blk2 -> blk4;
+    blk3 -> blk4;
+    blk4 -> redy;
+    dsc3 -> dsc4 [ label = "Yes" ];
+    dsc3 -> redy [ label = "No" ];
+    dsc4 -> blk5 [ label = "Yes" ];
+    dsc4 -> blk6 [ label = "No" ];
+    blk5 -> dsc5;
+    blk6 -> dsc5;
+    dsc5 -> blk7 [ label = "Yes" ];
+    dsc5 -> redy [ label = "No" ];
+    blk7 -> redy;
+}

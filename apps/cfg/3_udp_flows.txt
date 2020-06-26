@@ -1,0 +1,9 @@
+#
+# The format of each line is this file is as follows:
+#
+# <dest addr> <dest port> <start time> <end time> <packet size> <data rate>
+#
+
+128.89.92.94 8001 10.0 60.0 1250 1Mbps
+128.89.92.94 8002 30.0 60.0 1250 500Kbps
+128.89.92.94 8003 40.0 60.0 1250 2Mbps

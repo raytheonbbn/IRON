@@ -1,0 +1,179 @@
+# IRON: iron_headers
+#
+# Distribution A
+#
+# Approved for Public Release, Distribution Unlimited
+#
+# EdgeCT (IRON) Software Contract No.: HR0011-15-C-0097
+# DCOMP (GNAT)  Software Contract No.: HR0011-17-C-0050
+# Copyright (c) 2015-20 Raytheon BBN Technologies Corp.
+#
+# This material is based upon work supported by the Defense Advanced
+# Research Projects Agency under Contracts No. HR0011-15-C-0097 and
+# HR0011-17-C-0050. Any opinions, findings and conclusions or
+# recommendations expressed in this material are those of the author(s)
+# and do not necessarily reflect the views of the Defense Advanced
+# Research Project Agency.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# IRON: end
+
+#=============================================================================
+# Makefile.terminal
+#
+# NOTE:  Please refrain from defining flags in the terminal Makefiles (this
+#        Makefile), their proper place is in the build/BUILD_STYLE file.  If
+#        necessary, create a separate build/BUILD_STYLE that has the required
+#        flags defined.
+#=============================================================================
+
+#-----------------------------------------------------------------------------
+# Include path.  Use this section if any source files to be compiled require
+# header files outside of this directory.
+#-----------------------------------------------------------------------------
+
+#
+# Define the include paths to be used in compiling all source files
+# (e.g. -I../include).
+#
+INCLUDE_PATH = -I. \
+               -I../include \
+               -I../../testtools/include \
+               -I${CPPUNIT_HOME}/include
+
+#-----------------------------------------------------------------------------
+# Compiler flags.  Use this section if any source files to be compiled require
+# special flags.
+#-----------------------------------------------------------------------------
+
+#
+# Define the compiler flags to be used in compiling all source files
+# (e.g. -pthread for multi-threaded code, -fpic (or -fPIC) for shared
+# object code, -rdynamic for linking executables utilizing shared objects,
+# etc.).
+#
+OPT_FLAGS = -pthread
+
+#-----------------------------------------------------------------------------
+# Shared object creation.  Use this section if you are building a shared
+# object.
+#-----------------------------------------------------------------------------
+
+#
+# Define name of shared object to be created (e.g. libSONAME.so).
+#
+SO_NAME = 
+
+#
+# Define the shared object major, minor and revision numbers.
+#
+SO_MAJ_NUM = 
+SO_MIN_NUM = 
+SO_REV_NUM = 
+
+#
+# Define source code associated with shared object (e.g. SRC1.c SRC2.cc ...).
+#
+SO_SOURCE = 
+
+#
+# Define libraries needed for shared object creation (e.g. -lLIBNAME).
+#
+SO_LIBS = 
+
+#
+# Define library paths needed for the libraries above (e.g. -LLIBPATH).
+#
+SO_LIBRARY_PATH = 
+
+#-----------------------------------------------------------------------------
+# Library creation.  Use this section if you are building a library.
+#-----------------------------------------------------------------------------
+
+#
+# Define name of library to be created (e.g. libLIBNAME.a).
+#
+LIB_NAME = 
+
+#
+# Define source code associated with library (e.g. SRC1.c SRC2.cc ...).
+#
+LIB_SOURCE = 
+
+#-----------------------------------------------------------------------------
+# Executable creation.  Use this section if you are building an executable.
+#-----------------------------------------------------------------------------
+
+#
+# Define name of executable to be created (e.g. PROG).
+#
+EXE_NAME = testironcommon
+
+#
+# Define source code associated with executable (e.g. EXESRC1.c EXESRC2.cc).
+#
+EXE_SOURCE = common_cppunit_main.cc \
+             bin_map_test.cc \
+             callback_test.cc \
+             config_info_test.cc \
+             fifo_test.cc \
+             hash_table_test.cc \
+             inter_process_comm_test.cc \
+             ipv4addrtest.cc \
+             ipv4_endpoint_test.cc \
+             list_test.cc \
+             log_test.cc \
+             mash_table_test.cc \
+             ordered_list_test.cc \
+             ordered_mash_table_test.cc \
+             packet_fifo_test.cc \
+             packet_history_mgr_test.cc \
+             packet_test.cc \
+             packet_pool_test.cc \
+             queue_depths_test.cc \
+             queue_test.cc \
+             rng_test.cc \
+             scoped_lock_test.cc \
+             shared_memory_test.cc \
+             string_utils_test.cc \
+             thread_test.cc \
+             time_test.cc \
+             timer_test.cc \
+             zombie_queue_test.cc
+
+#
+# Define libraries needed for executable creation (e.g. -lLIBNAME).
+#
+EXE_LIBS = -ltesttools -lcommon -lcppunit -ldl -lrt
+
+#
+# Define library paths needed for the libraries above (e.g. -LLIBPATH).
+#
+EXE_LIBRARY_PATH = -L${IRON_HOME}/lib/${BUILD_SUBDIR} \
+                   -L${CPPUNIT_HOME}/lib
+
+#-----------------------------------------------------------------------------
+# Internals.  Do not modify anything below.
+#-----------------------------------------------------------------------------
+
+#
+# Include the standard terminal makefile.
+#
+include ${MAKE_HOME}/terminal.mk

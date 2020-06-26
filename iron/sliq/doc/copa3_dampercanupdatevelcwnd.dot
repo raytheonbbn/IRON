@@ -1,0 +1,13 @@
+digraph sliq_copa3_dampercanupdatevelcwnd {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Return true" ];
+    blk2 [ shape = box,     label = "Return false" ];
+    dsc1 [ shape = diamond, label = "Is state != HOLD?" ];
+
+    strt -> dsc1 [ label = "DamperCanUpdateVelCwnd" ];
+    dsc1 -> blk1 [ label = "Yes" ];
+    dsc1 -> blk2 [ label = "No" ];
+    blk1 -> done;
+    blk2 -> done;
+}

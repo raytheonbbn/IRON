@@ -1,0 +1,91 @@
+#=============================================================================
+# Linux_3.13_gprof
+#
+# This is the Linux 3.13 build style file for compiling the software in
+# optimized mode to be profiled with gprof.
+#=============================================================================
+
+#-----------------------------------------------------------------------------
+# Set the project home.
+#-----------------------------------------------------------------------------
+
+PROJECT_HOME = ${IRON_HOME}
+
+#-----------------------------------------------------------------------------
+# Build subdirectories.
+#-----------------------------------------------------------------------------
+
+OBJ_BASE = ${PROJECT_HOME}/obj
+LIB_BASE = ${PROJECT_HOME}/lib
+EXE_BASE = ${PROJECT_HOME}/bin
+TESTR_BASE = ${PROJECT_HOME}/tests
+
+SO_LOCATION  = ${PROJECT_HOME}/lib/${BUILD_SUBDIR}
+OBJ_LOCATION = ${PROJECT_HOME}/obj/${BUILD_SUBDIR}
+LIB_LOCATION = ${PROJECT_HOME}/lib/${BUILD_SUBDIR}
+EXE_LOCATION = ${PROJECT_HOME}/bin/${BUILD_SUBDIR}
+TESTR_LOCATION = ${TESTR_BASE}/${BUILD_SUBDIR}
+
+#-----------------------------------------------------------------------------
+# Compiler optimization level.
+#-----------------------------------------------------------------------------
+
+DEBUG = -O2
+
+#-----------------------------------------------------------------------------
+# Compiler warning options.
+#-----------------------------------------------------------------------------
+
+WARN = -Wall -Werror
+
+#-----------------------------------------------------------------------------
+# Platform-specific compiler flags.
+#-----------------------------------------------------------------------------
+
+ENV_FLAGS = -DNDEBUG -DUNIX -DLINUX -DLINUX_3_13 ${IRON_GCC_VISENV} -pg
+CCFLAGS   = ${INCLUDE_PATH} ${PROJ_FLAGS} ${OPT_FLAGS} ${ENV_FLAGS} ${DEBUG} ${WARN}
+CFLAGS    = ${INCLUDE_PATH} ${PROJ_FLAGS} ${OPT_FLAGS} ${ENV_FLAGS} ${DEBUG} ${WARN}
+
+#-----------------------------------------------------------------------------
+# Platform-specific loader flags for linking.
+#-----------------------------------------------------------------------------
+
+PLATFORM_LIBS = 
+LDFLAGS = ${EXE_LIBRARY_PATH} ${PLATFORM_LIBS}
+
+#-----------------------------------------------------------------------------
+# Platform-specific tools.
+#-----------------------------------------------------------------------------
+
+CCC      = /usr/bin/g++
+CC       = /usr/bin/gcc
+AR       = /usr/bin/ar
+AR_FLAGS = crv
+RANLIB   = /usr/bin/ranlib
+RM       = /bin/rm -f
+
+#-----------------------------------------------------------------------------
+# Pre and post C++ compile scripts.  Can be customized to perform shell
+# commands associated with the build.
+#-----------------------------------------------------------------------------
+
+CC_PRECOMPILE = 
+
+CC_POSTCOMPILE = 
+
+CC_PRELINK = 
+
+CC_POSTLINK = 
+
+#-----------------------------------------------------------------------------
+# Pre and post C compile scripts.  Can be customized to perform shell commands
+# associated with the build.
+#-----------------------------------------------------------------------------
+
+C_PRECOMPILE = 
+
+C_POSTCOMPILE =
+
+C_PRELINK = 
+
+C_POSTLINK =

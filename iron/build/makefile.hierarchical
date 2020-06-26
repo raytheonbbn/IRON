@@ -1,0 +1,32 @@
+#=============================================================================
+# Makefile.hierarchical
+#=============================================================================
+
+#-----------------------------------------------------------------------------
+# Subdirectory path.  Specify which subdirectories should be made.
+#-----------------------------------------------------------------------------
+
+#
+# Define other subdirectories to be made in the order they should be built.
+#
+SRC_DIRS = 
+
+#-----------------------------------------------------------------------------
+# Adjacent Makefiles.  Specify which Makefiles in this directory should be
+# used to build all required parts.  (One library or executable per Makefile.)
+#-----------------------------------------------------------------------------
+
+#
+# Define Makefiles in this directory to be made in the order they should be
+# built.
+#
+ADJACENT_MAKEFILES = 
+
+#-----------------------------------------------------------------------------
+# Internals.  Do not modify anything below.
+#-----------------------------------------------------------------------------
+
+#
+# Include the standard hierarchical makefile.
+#
+include ${MAKE_HOME}/hierarchical.mk

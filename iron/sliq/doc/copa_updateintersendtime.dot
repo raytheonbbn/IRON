@@ -1,0 +1,22 @@
+digraph sliq_copa_updateintersendtime {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Set rtt_ewma = max(rtt_acked, rtt_nacked)\nSet queue_delay = (rtt_ewma - min_rtt)\nSet calc_intersent_time = (delta * queue_delay)" ];
+    blk2 [ shape = box,     label = "Set calc_intersend_time = max(calc_intersend_time, (prev_intersend_time / 2))" ];
+    blk3 [ shape = box,     label = "Set calc_intersend_time = max(calc_intersend_time, MIN_IST)\nSet calc_intersend_time = min(calc_intersend_time, max((2 * rtt_acked), MAX_IST))" ];
+    blk4 [ shape = box,     label = "Set intersend_time = randomize(calc_intersend_time)" ];
+    blk5 [ shape = box,     label = "Set intersend_time = calc_intersend_time" ];
+    dsc1 [ shape = diamond, label = "Is prev_intersend_time > 0?" ];
+    dsc2 [ shape = diamond, label = "Is random_send == true?" ];
+
+    strt -> blk1 [ label = "UpdateIntersendTime" ];
+    blk1 -> dsc1;
+    dsc1 -> blk2 [ label = "Yes" ];
+    dsc1 -> blk3 [ label = "No" ];
+    blk2 -> blk3;
+    blk3 -> dsc2;
+    dsc2 -> blk4 [ label = "Yes" ];
+    dsc2 -> blk5 [ label = "No" ];
+    blk4 -> done;
+    blk5 -> done;
+}
