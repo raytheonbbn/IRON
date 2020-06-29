@@ -2502,6 +2502,16 @@ uint32_t UberFwdAlg::FindMcastPacketsForGradient(
     BinIndex  idx                 = 0;
     DstVec    proposed_dst_vec    = 0;
 
+    if ((anti_circ_ != AC_TECH_NONE) &&
+        (packet_history_mgr_->PacketVisitedBin(
+          pkt, bin_map_.GetPhyBinId(path_ctrl->remote_bin_idx()))))
+    {
+      LogD(kClassName, __func__, "Pkt %p has already visited bin %" PRIBinId
+           ", no match.\n", pkt,
+           bin_map_.GetPhyBinId(path_ctrl->remote_bin_idx()));
+      continue;
+    }
+
     for (bool valid = bin_map_.GetFirstUcastBinIndex(idx);
          valid;
          valid = bin_map_.GetNextUcastBinIndex(idx))
