@@ -176,7 +176,7 @@ bool Nftp::Initialize(ConfigInfo& config_info)
     return false;
   }
 
-  if (sndr_ && (src_port_ == 0))
+  if (rcvr_ && (src_port_ == 0))
   {
     fprintf(stderr, "[Nftp::Initialize] A source port for the file transfer "
             "MUST be provided.\n");
@@ -262,7 +262,7 @@ void Nftp::Start()
 }
 
 //============================================================================
-void Nftp::SendFile() const
+void Nftp::SendFile()
 {
   // Coordinate with the network.
   if (!net_if_->CoordinateWithNetwork())
@@ -272,10 +272,57 @@ void Nftp::SendFile() const
     return;
   }
 
+  // Create a socket that will not be used for sending or receiving
+  // packets. This socket will perform a bind() call so that it is assigned an
+  // ephemeral source port. We will then query the socket for the assigned
+  // source port and will use this port in the File Transfer Advertisement and
+  // for the NORM Session that will do the file transfer.
+  int  s = -1;
+  if ((s = socket(PF_INET, SOCK_DGRAM, 0)) < 0)
+  {
+    perror("socket()");
+    return;
+  }
+
+  // Set SO_REUSEADDR for the socket so we can reuse the assigned ephemeral
+  // source port.
+  int optval = 1;
+  setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
+  // Bind to get assigned an ephemeral source port.
+  struct sockaddr_in  addr;
+  memset(&addr, 0, sizeof(addr));
+
+  addr.sin_family      = AF_INET;
+  addr.sin_port        = htons(0);
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+  if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+  {
+    perror("bind()");
+    close(s);
+    return;
+  }
+
+  // Query the created socket for the ephemeral source port.
+  struct sockaddr sock_addr;
+  socklen_t       sock_len = sizeof(addr);
+  if (getsockname(s, (struct sockaddr*)&sock_addr, &sock_len) < 0)
+  {
+    perror("getsockname()");
+    close(s);
+    return;
+  }
+
+  src_port_ = ntohs(((struct sockaddr_in*)&sock_addr)->sin_port);
+
+  fprintf(stderr, "[Nftp::SendFile] Source port: %hu\n", src_port_);
+
   if (!AdvFileXfer())
   {
     fprintf(stderr, "[Nftp::SendFile] File transfer advertisement signaling "
             "error. Aborting...\n");
+    close(s);
     return;
   }
 
@@ -330,7 +377,7 @@ void Nftp::SendFile() const
   // may be possible. This must be called before NormStartSender().
   if (src_port_ != 0)
   {
-    NormSetTxPort(session, src_port_);
+    NormSetTxPort(session, src_port_, true);
 
     // Filter on source port in received packets.
     NormSetSsmSrcPort(session, src_port_);
@@ -404,6 +451,9 @@ void Nftp::SendFile() const
   NormDestroySession(session);
   NormDestroyInstance(instance);
 
+  // Close the temporary socket, created at the beginning of the method.
+  close(s);
+
   fprintf(stderr, "[Nftp::SendFile] Done.\n");
 }
 
@@ -453,7 +503,7 @@ bool Nftp::AdvFileXfer() const
   // Uncomment to use a specific transmit port number. This can be the same as
   // session port (rx port), but this is not recommended when unicast feedback
   // may be possible. This must be called before NormStartSender().
-  NormSetTxPort(session, 6003);
+  NormSetTxPort(session, 6003, true);
 
   // Uncomment to enable TCP-friendly congestion control
   if (enable_cc_)
@@ -1064,7 +1114,7 @@ void Nftp::RecvFile()
     NormSetSsmSrcPort(session, src_port_);
 
     // Use the sender's source port for the Tx port for any repair messages.
-    NormSetTxPort(session, src_port_);
+    NormSetTxPort(session, src_port_, true);
   }
 
   // Start the receiver with 1 Mbyte buffer per sender.

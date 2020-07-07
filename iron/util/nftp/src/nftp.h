@@ -98,7 +98,7 @@ class Nftp
   Nftp& operator=(const Nftp& other);
 
   /// \brief Send the file to the multicast group.
-  void SendFile() const;
+  void SendFile();
 
   /// \brief Advertise a file transfer.
   ///

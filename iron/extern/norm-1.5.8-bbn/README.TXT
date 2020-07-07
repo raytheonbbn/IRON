@@ -1,8 +1,13 @@
 Prolog:
 
-This distribution has been modified to include support for window-based
-flow control as an option, where window control is provided by IRON's
-udp-proxy. Hence the reason this directory is called norm-1.5.8-bbn.
+This distribution has been modified to include support for:
+
+- Enabling window-based flow control as an option, where window control is
+  provided by IRON's UDP Proxy.
+- Adding a Berkeley Packet Filter (BPF) to a NORM session to filter received
+  multicast packets by source port.
+
+Hence the reason this directory is called norm-1.5.8-bbn.
 
 
                     NORM SOURCE CODE RELEASE

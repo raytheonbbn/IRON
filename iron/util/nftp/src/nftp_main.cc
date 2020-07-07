@@ -60,7 +60,7 @@ void Usage()
   fprintf(stderr, "  nftp -S <file_name> [options] dst1:[path] [dst2:[path]] "
           "[dst3:[path]]\n");
   fprintf(stderr, "    ... [dstN:[path]]\n\n");
-  fprintf(stderr, "  nftp -R <out_dir> [options]\n\n");
+  fprintf(stderr, "  nftp -R <out_dir> -s <src_port> [options]\n\n");
   fprintf(stderr, "General Options:\n");
   fprintf(stderr, "  -i <if_name>     Multicast interface name.\n");
   fprintf(stderr, "                   Default: %s\n", DEFAULT_MCAST_IF_NAME);
@@ -73,12 +73,6 @@ void Usage()
   fprintf(stderr, "                   Note: This MUST match nftpd multicast "
           "port.\n");
   fprintf(stderr, "                   Default: %d\n", DEFAULT_MCAST_DST_PORT);
-  fprintf(stderr, "  -s <port>        Source port for file transfer.\n");
-  fprintf(stderr, "                   Note: For sources, this is "
-          "required. For\n");
-  fprintf(stderr, "                   destinations, this indicates that only "
-          "packets\n");
-  fprintf(stderr, "                   with this source port are desired.\n");
   fprintf(stderr, "  -h               Print out usage information.\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "Source Options:\n");
@@ -99,6 +93,10 @@ void Usage()
   fprintf(stderr, "  -R <out_dir>     Receive a file and place it in the "
           "output\n");
   fprintf(stderr, "                   directory.\n");
+  fprintf(stderr, "  -s <src_port>    Source port for file transfer.\n");
+  fprintf(stderr, "                   Only packets containing this source "
+          "port\n");
+  fprintf(stderr, "                   will be received.\n");
   fprintf(stderr, "  -t               Write files to a temporary location\n");
   fprintf(stderr, "                   during transfer, then move to final\n");
   fprintf(stderr, "                   location when transfer completes.\n");
