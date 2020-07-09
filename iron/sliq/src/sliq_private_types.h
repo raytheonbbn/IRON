@@ -65,6 +65,7 @@ namespace sliq
 {
 
   typedef uint8_t   CcId;
+  typedef uint32_t  ClientId;
   typedef uint32_t  EndOffset;
   typedef uint8_t   FecBlock;
   typedef uint16_t  FecEncPktLen;
@@ -82,6 +83,7 @@ namespace sliq
 
   // Macros for printing format specifiers.
 #define PRICcId              PRIu8
+#define PRIClientId          PRIu32
 #define PRIEndOffset         PRIu32
 #define PRIFecBlock          PRIu8
 #define PRIFecEncPktLen      PRIu16

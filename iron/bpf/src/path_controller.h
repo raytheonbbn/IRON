@@ -40,6 +40,7 @@
 
 #include "fd_event.h"
 #include "ipv4_address.h"
+#include "ipv4_endpoint.h"
 #include "itime.h"
 #include "packet_pool.h"
 
@@ -241,8 +242,9 @@ namespace iron
     ///
     /// \param  bpf  Pointer to backpressure forwarder.
     PathController(BPFwder* bpf)
-      : bpf_(bpf), remote_bin_id_(0), remote_bin_idx_(kInvalidBinIndex),
-        label_(), path_controller_number_(0), endpoints_str_(), ready_(false)
+        : bpf_(bpf), remote_bin_id_(0), remote_bin_idx_(kInvalidBinIndex),
+          label_(), path_controller_number_(0), endpoints_str_(),
+          local_endpt_(), remote_endpt_(), ready_(false)
     {
     }
 
@@ -426,11 +428,29 @@ namespace iron
       return endpoints_str_;
     }
 
+    /// \brief Get the Path Controller's local IPv4 endpoint, which was set at
+    /// initialization time.
+    ///
+    /// \return  The Path Controller's local endpoint.
+    inline const iron::Ipv4Endpoint& local_endpt() const
+    {
+      return local_endpt_;
+    }
+
+    /// \brief Get the Path Controller's remote IPv4 endpoint, which was set
+    /// at initialization time.
+    ///
+    /// \return  The Path Controller's remote endpoint.
+    inline const iron::Ipv4Endpoint& remote_endpt() const
+    {
+      return remote_endpt_;
+    }
+
     /// \brief  Verified if the path controller has been initialized yet with a
     ///         proper remote iron node address and bin index.
     ///
     /// \return True if the path controller is ready, false otherwise.
-    inline bool ready()
+    inline bool ready() const
     {
       return ready_;
     }
@@ -438,30 +458,36 @@ namespace iron
   protected:
 
     /// A pointer to the BPF that owns the Path Controller.
-    BPFwder*     bpf_;
+    BPFwder*            bpf_;
 
     /// The remote node's bin identifier.  This is simply stored in the Path
     /// Controller for the backpressure forwarder's convenience.
-    BinId        remote_bin_id_;
+    BinId               remote_bin_id_;
 
     /// The remote node's bin index.  This is simply stored in the Path
     /// Controller for the backpressure forwarder's convenience.
-    BinIndex     remote_bin_idx_;
+    BinIndex            remote_bin_idx_;
 
     /// The label associated with this particular path controller (for
     /// instance, to differentiate between multiple path controllers to the
     /// same remote node).
-    std::string  label_;
+    std::string         label_;
 
     /// The number assigned to this Path Controller during initialization.
-    uint32_t     path_controller_number_;
+    uint32_t            path_controller_number_;
 
     /// The endpoint IPv4 addresses and optional UDP port numbers.
-    std::string  endpoints_str_;
+    std::string         endpoints_str_;
+
+    /// The local IPv4 address and UDP port number.
+    iron::Ipv4Endpoint  local_endpt_;
+
+    /// The remote IPv4 address and UDP port number.
+    iron::Ipv4Endpoint  remote_endpt_;
 
     /// Whether this path controller has been initialized with remote IRON nbr
     /// and its bin index.
-    bool         ready_;
+    bool                ready_;
 
     /// \brief Check if any Packet object metadata headers needs to be
     /// prepended to the packet to allow recreating the object at the far

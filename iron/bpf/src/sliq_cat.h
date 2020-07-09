@@ -623,12 +623,6 @@ namespace iron
     /// A flag recording if the active capacity estimation is enabled or not.
     bool                 active_cap_est_;
 
-    /// The local IPv4 address and UDP port number.
-    iron::Ipv4Endpoint   local_endpt_;
-
-    /// The remote IPv4 address and UDP port number.
-    iron::Ipv4Endpoint   remote_endpt_;
-
     /// The EF data reliability mode and settings.
     sliq::Reliability    ef_rel_;
 

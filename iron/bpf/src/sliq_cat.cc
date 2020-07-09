@@ -61,6 +61,7 @@
 
 
 using ::iron::ConfigInfo;
+using ::iron::Ipv4Endpoint;
 using ::iron::List;
 using ::iron::Log;
 using ::iron::PacketPool;
@@ -233,8 +234,6 @@ SliqCat::SliqCat(BPFwder* bpf, PacketPool& packet_pool, Timer& timer)
       is_connected_(false),
       in_destructor_(false),
       active_cap_est_(true),
-      local_endpt_(),
-      remote_endpt_(),
       ef_rel_(),
       num_cc_alg_(0),
       cc_alg_(),
@@ -698,7 +697,7 @@ bool SliqCat::GetParameter(const char* name, string& value) const
 //============================================================================
 bool SliqCat::ProcessConnectionRequest(
   EndptId server_endpt_id, EndptId data_endpt_id,
-  const iron::Ipv4Endpoint& client_address)
+  const Ipv4Endpoint& client_address)
 {
   // Only direct connections are used, so this callback should never occur.
   LogE(kClassName, __func__, "SliqCat %" PRIu32 ": Error, received "

@@ -154,14 +154,24 @@ namespace
 
 //============================================================================
 Sond::Sond(BPFwder* bpf, PacketPool& packet_pool, Timer& timer)
-    : PathController(bpf), packet_pool_(packet_pool), timer_(timer),
-      max_line_rate_(kDefLineRate), local_endpt_(), remote_endpt_(),
-      udp_fd_(-1), ef_data_pkt_queue_(packet_pool),
-      control_pkt_queue_(packet_pool), data_pkt_queue_(packet_pool),
-      qlam_pkt_ptr_(NULL), xmit_pkt_ptr_(NULL), xmit_start_time_(),
-      xmit_delta_time_(0.0), xmit_timer_handle_(), total_bytes_queued_(0),
-      total_bytes_sent_(0), cb_max_period_(kPddCbMaxPeriodSec),
-      cb_pdd_(kDefaultPddSec), cb_prev_time_()
+    : PathController(bpf),
+      packet_pool_(packet_pool),
+      timer_(timer),
+      max_line_rate_(kDefLineRate),
+      udp_fd_(-1),
+      ef_data_pkt_queue_(packet_pool),
+      control_pkt_queue_(packet_pool),
+      data_pkt_queue_(packet_pool),
+      qlam_pkt_ptr_(NULL),
+      xmit_pkt_ptr_(NULL),
+      xmit_start_time_(),
+      xmit_delta_time_(0.0),
+      xmit_timer_handle_(),
+      total_bytes_queued_(0),
+      total_bytes_sent_(0),
+      cb_max_period_(kPddCbMaxPeriodSec),
+      cb_pdd_(kDefaultPddSec),
+      cb_prev_time_()
 {
   LogI(kClassName, __func__, "Creating Sond...\n");
 }

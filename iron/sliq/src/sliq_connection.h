@@ -640,6 +640,7 @@ namespace sliq
     /// \param  server_port     The local server port number to use.
     /// \param  client_address  A reference to the client's IP address and
     ///                         port number.
+    /// \param  id              The client ID from the connection handshake.
     /// \param  cc_alg          The congestion control algorithms and settings
     ///                         in an array.
     /// \param  num_cc_alg      The number of congestion control algorithms
@@ -649,7 +650,7 @@ namespace sliq
     ///
     /// \return  True on success, or false otherwise.
     bool InitServerData(uint16_t server_port,
-                        const iron::Ipv4Endpoint& client_address,
+                        const iron::Ipv4Endpoint& client_address, ClientId id,
                         const CongCtrl* cc_alg, size_t num_cc_alg,
                         EndptId& endpt_id);
 
@@ -661,9 +662,10 @@ namespace sliq
     /// Does not block while the connection is being established.
     ///
     /// \param  echo_ts  The echo timestamp.
+    /// \param  id       The client ID from the connection handshake.
     ///
     /// \return  True on success, or false otherwise.
-    bool ContinueConnectToClient(PktTimestamp echo_ts);
+    bool ContinueConnectToClient(PktTimestamp echo_ts, ClientId id);
 
     /// \brief Create the necessary congestion control objects for the
     /// connection.
@@ -674,13 +676,17 @@ namespace sliq
     /// \return  True on success, or false otherwise.
     bool CreateCongCtrlObjects(bool is_client);
 
-    /// \brief Send a connection handshake packet to the peer.
+    /// \brief Send a connection handshake packet to the specified
+    /// destination.
     ///
+    /// \param  dst      A reference to the packet's destination.
     /// \param  tag      The message tag.
     /// \param  echo_ts  The echo timestamp.
+    /// \param  id       The client ID.
     ///
     /// \return  True on success, or false otherwise.
-    bool SendConnHndshkPkt(MsgTag tag, PktTimestamp echo_ts);
+    bool SendConnHndshkPkt(const iron::Ipv4Endpoint& dst, MsgTag tag,
+                           PktTimestamp echo_ts, ClientId id);
 
     /// \brief Send a reset connection packet to the peer.
     ///
@@ -766,8 +772,9 @@ namespace sliq
 
     /// \brief Process a received reject connection handshake header.
     ///
+    /// \param  hdr  The received header.
     /// \param  src  The source address of the received header.
-    void ProcessReject(const iron::Ipv4Endpoint& src);
+    void ProcessReject(ConnHndshkHeader& hdr, const iron::Ipv4Endpoint& src);
 
     /// \brief Process a received reset connection header.
     ///
@@ -1365,6 +1372,9 @@ namespace sliq
 
     /// The peer's address and port number.
     iron::Ipv4Endpoint   peer_addr_;
+
+    /// The client's unique ID for the connection.
+    ClientId             client_id_;
 
     /// The UDP socket file descriptor.  Also used as the endpoint ID.
     SocketId             socket_id_;

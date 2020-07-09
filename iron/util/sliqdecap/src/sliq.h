@@ -92,7 +92,7 @@ enum HeaderType
 
 //  ================ SLIQ Connection Handshake Headers ================
 // The size of the base connection handshake header, in bytes.
-const size_t  kConnHandshakeHdrBaseSize = 12;
+const size_t  kConnHandshakeHdrBaseSize = 16;
 
 // The size of the connection handshake CC algorithm fields, in bytes.
 const size_t  kConnHandshakeHdrCcAlgSize = 8;

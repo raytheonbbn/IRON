@@ -150,6 +150,16 @@ Packet* Framer::GenerateConnHndshk(const ConnHndshkHeader& input)
     }
   }
 
+  // Append the unique client ID.
+  if (!WriteUint32(input.client_id, packet))
+  {
+    LogE(kClassName, __func__, "Error generating connection handshake client "
+         "ID.\n");
+    TRACK_UNEXPECTED_DROP(kClassName, packet_pool_);
+    packet_pool_.Recycle(packet);
+    return NULL;
+  }
+
   return packet;
 }
 
@@ -678,6 +688,12 @@ bool Framer::ParseConnHndshkHeader(const Packet* packet, size_t& offset,
   if (output.num_cc_algs > SliqApp::kMaxCcAlgPerConn)
   {
     output.num_cc_algs = SliqApp::kMaxCcAlgPerConn;
+  }
+
+  // Parse the unique client ID, if present.
+  if (!ReadUint32(packet, offset, output.client_id))
+  {
+    output.client_id = 0;
   }
 
   return true;
@@ -1240,15 +1256,15 @@ bool Framer::ReadInt32(const Packet* packet, size_t& offset,
 //============================================================================
 ConnHndshkHeader::ConnHndshkHeader()
     : num_cc_algs(0), message_tag(0), timestamp(0), echo_timestamp(0),
-      cc_alg()
+      client_id(0), cc_alg()
 {}
 
 //============================================================================
 ConnHndshkHeader::ConnHndshkHeader(uint8_t num_alg, MsgTag tag,
                                    PktTimestamp ts, PktTimestamp echo_ts,
-                                   CongCtrl* alg)
+                                   ClientId id, CongCtrl* alg)
     : num_cc_algs(num_alg), message_tag(tag), timestamp(ts),
-      echo_timestamp(echo_ts), cc_alg()
+      echo_timestamp(echo_ts), client_id(id), cc_alg()
 {
   if (alg == NULL)
   {

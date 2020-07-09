@@ -189,6 +189,8 @@ namespace sliq
   /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   /// |                     CC Alg Parameters #N                      |
   /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  /// |                       Unique Client ID                        |
+  /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   ///
   ///   Header Type (1 byte) (0x00)
   ///   Number of Congestion Control Algorithms (1 byte)
@@ -203,9 +205,10 @@ namespace sliq
   ///       p      - Pacing, Cubic/Reno Only (1 bit)
   ///     Unused (2 bytes)
   ///     Congestion Control Parameters (4 bytes)
+  ///   Unique Client Identifier (4 bytes)
   /// \endverbatim
   ///
-  /// Length = 12 bytes + (num_cc_alg * 8 bytes).
+  /// Length = 16 bytes + (num_cc_alg * 8 bytes).
   ///
   /// Packets with this header use specialized reliability and
   /// retransmission rules.
@@ -213,13 +216,14 @@ namespace sliq
   {
     ConnHndshkHeader();
     ConnHndshkHeader(uint8_t num_alg, MsgTag tag, PktTimestamp ts,
-                     PktTimestamp echo_ts, CongCtrl* alg);
+                     PktTimestamp echo_ts, ClientId id, CongCtrl* alg);
     size_t ConvertToCongCtrl(CongCtrl* alg, size_t max_alg);
 
     uint8_t       num_cc_algs;
     MsgTag        message_tag;
     PktTimestamp  timestamp;
     PktTimestamp  echo_timestamp;
+    ClientId      client_id;
 
     struct
     {

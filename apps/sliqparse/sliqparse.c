@@ -84,8 +84,9 @@ void print_conn_hndshk(double pkt_time, const char *saddr, const char *daddr,
            (uint32_t)ntohl(chb_hdr->ts),
            (uint32_t)ntohl(chb_hdr->echo_ts));
 
-    for (i = 0, len = (kConnHndshkHdrBaseSize + kConnHndshkHdrCcAlgSize);
-         ((i < chb_hdr->num_cc) && (len <= pkt_len));
+    for (i = 0, len = kConnHndshkHdrBaseSize;
+         ((i < chb_hdr->num_cc) &&
+          (pkt_len >= (len + kConnHndshkHdrCcAlgSize)));
          ++i, len += kConnHndshkHdrCcAlgSize)
     {
       printf(" | cc[%d] type %d det %d pace %d param %" PRIu32 ,
@@ -94,6 +95,16 @@ void print_conn_hndshk(double pkt_time, const char *saddr, const char *daddr,
              (int)((cha_hdr[i].cc_flags >> 1) & 0x01),
              (int)(cha_hdr[i].cc_flags & 0x01),
              (uint32_t)ntohl(cha_hdr[i].cc_params));
+    }
+
+    if ((i == chb_hdr->num_cc) &&
+        (pkt_len >= (len + kConnHndshkHdrClientIdSize)))
+    {
+      struct ConnHndshkHdrClientId  *chci_hdr =
+        (struct ConnHndshkHdrClientId *)(sliq + len);
+
+      printf(" | client_id %" PRIu32 ,
+             (uint32_t)ntohl(chci_hdr->client_id));
     }
   }
   else

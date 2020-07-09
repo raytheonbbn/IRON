@@ -1260,10 +1260,17 @@ bool TestApp::ProcessConnectionRequest(EndptId server_endpt_id,
        ", data endpt %" PRIEndptId ", client %s.\n", server_endpt_id,
        data_endpt_id, client_address.ToString().c_str());
 
-  // Accept the connection from the client.
-  data_endpt_id_ = data_endpt_id;
+  if (data_endpt_id_ == -1)
+  {
+    // Accept the connection from the client.
+    data_endpt_id_ = data_endpt_id;
 
-  return true;
+    return true;
+  }
+
+  // Reject the connection from the client.  This application is already
+  // connected to a client, and only supports a single client connection.
+  return false;
 }
 
 //============================================================================

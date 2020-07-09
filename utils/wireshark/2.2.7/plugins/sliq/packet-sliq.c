@@ -129,12 +129,15 @@ static int  hf_sliq_stream_id = -1;
 /* +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ */
 /* |                     CC Alg Parameters #N                      | */
 /* +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ */
+/* |                       Unique Client ID                        | */
+/* +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ */
 
 /* Flags:  D = Deterministic */
 /*         P = Pacing        */
 
-#define CH_BASE_HDR_LEN    12
-#define CH_CC_ALG_HDR_LEN  8
+#define CH_BASE_HDR_LEN       12
+#define CH_CC_ALG_HDR_LEN     8
+#define CH_CLIENT_ID_HDR_LEN  4
 
 static int  hf_sliq_ch_num_cc_alg      = -1;
 static int  hf_sliq_ch_msg_tag         = -1;
@@ -145,6 +148,7 @@ static int  hf_sliq_ch_cc_flags        = -1;
 static int  hf_sliq_ch_cc_flags_determ = -1;
 static int  hf_sliq_ch_cc_flags_pacing = -1;
 static int  hf_sliq_ch_cc_params       = -1;
+static int  hf_sliq_ch_client_id       = -1;
 
 #define CH_DETERM_FLAG  0x02
 #define CH_PACING_FLAG  0x01
@@ -375,7 +379,7 @@ static int  hf_sliq_d_fec_num_src       = -1;
 static int  hf_sliq_d_fec_rnd           = -1;
 static int  hf_sliq_d_fec_grp           = -1;
 static int  hf_sliq_d_enc_pkt_len       = -1;
-static int  hf_sliq_d_ttg      = -1;
+static int  hf_sliq_d_ttg               = -1;
 
 #define D_ENC_PKT_LEN_FLAG  0x40
 #define D_FEC_FLAG          0x20
@@ -597,6 +601,14 @@ static int dissect_sliq(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
             offset += 2;
 
             proto_tree_add_item(sliq_tree, hf_sliq_ch_cc_params,
+                                tvb, offset, 4, ENC_BIG_ENDIAN);
+            offset += 4;
+          }
+
+          if (tvb_reported_length_remaining(tvb, offset) >=
+              CH_CLIENT_ID_HDR_LEN)
+          {
+            proto_tree_add_item(sliq_tree, hf_sliq_ch_client_id,
                                 tvb, offset, 4, ENC_BIG_ENDIAN);
             offset += 4;
           }
@@ -1229,6 +1241,12 @@ void proto_register_sliq(void)
     },
     { &hf_sliq_ch_cc_params,
       { "Congestion Control Parameters", "sliq.ch_cc_params",
+        FT_UINT32, BASE_DEC,
+        NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_sliq_ch_client_id,
+      { "Client ID", "sliq.ch_client_id",
         FT_UINT32, BASE_DEC,
         NULL, 0x0,
         NULL, HFILL }

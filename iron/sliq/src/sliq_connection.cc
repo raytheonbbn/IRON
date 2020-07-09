@@ -241,6 +241,7 @@ Connection::Connection(SliqApp& app, SocketManager& socket_mgr,
       state_(UNCONNECTED),
       self_addr_(),
       peer_addr_(),
+      client_id_(0),
       socket_id_(-1),
       is_write_blocked_(false),
       is_in_rto_(false),
@@ -713,7 +714,7 @@ bool Connection::ConnectToServer(const Ipv4Endpoint& server_address)
 
   // Initiate the connection establishment process by sending a client hello
   // message to the server.
-  if (!SendConnHndshkPkt(kClientHelloTag, 0))
+  if (!SendConnHndshkPkt(peer_addr_, kClientHelloTag, 0, client_id_))
   {
     timer_.CancelTimer(hello_timer_);
     return false;
@@ -2024,6 +2025,19 @@ bool Connection::InitState(EndptType type)
   num_hellos_       = 0;
   hello_timer_.Clear();
 
+  // If this is the CLIENT_DATA endpoint, then a unique client ID must be
+  // assigned.
+  if (type_ == CLIENT_DATA)
+  {
+    uint8_t*  id_ptr = reinterpret_cast<uint8_t*>(&client_id_);
+
+    if (!rng_.GetByteSequence(id_ptr, sizeof(client_id_)))
+    {
+      LogE(kClassName, __func__, "Error assigning unique client ID.\n");
+      return false;
+    }
+  }
+
   // Allocate an array of objects for RTT/PDD estimate callbacks if needed.
   if (rtt_pdd_samples_ == NULL)
   {
@@ -2043,8 +2057,8 @@ bool Connection::InitState(EndptType type)
 //============================================================================
 bool Connection::InitServerData(uint16_t server_port,
                                 const Ipv4Endpoint& client_address,
-                                const CongCtrl* cc_alg, size_t num_cc_alg,
-                                EndptId& endpt_id)
+                                ClientId id, const CongCtrl* cc_alg,
+                                size_t num_cc_alg, EndptId& endpt_id)
 {
   // Check if the object has already been initialized.
   if (initialized_)
@@ -2061,6 +2075,7 @@ bool Connection::InitServerData(uint16_t server_port,
 
   // Store the client address.
   peer_addr_ = client_address;
+  client_id_ = id;
 
   // Open a UDP socket.
   socket_id_ = socket_mgr_.CreateUdpSocket(kFdEventRead
@@ -2161,8 +2176,9 @@ bool Connection::InitServerData(uint16_t server_port,
   app_.ProcessFileDescriptorChange();
 
   LogA(kClassName, __func__, "Conn %" PRISocketId ": Server %s accepted "
-       "connection from client %s.\n", socket_id_,
-       self_addr_.ToString().c_str(), peer_addr_.ToString().c_str());
+       "connection from client %s id %" PRIClientId ".\n", socket_id_,
+       self_addr_.ToString().c_str(), peer_addr_.ToString().c_str(),
+       client_id_);
 
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Connection object %p assigned endpoint ID %"
@@ -2173,7 +2189,7 @@ bool Connection::InitServerData(uint16_t server_port,
 }
 
 //============================================================================
-bool Connection::ContinueConnectToClient(PktTimestamp echo_ts)
+bool Connection::ContinueConnectToClient(PktTimestamp echo_ts, ClientId id)
 {
   // Check if this connection object can continue to connect to a client.
   if ((type_ != SERVER_DATA) || (!initialized_) || (state_ != UNCONNECTED))
@@ -2185,6 +2201,7 @@ bool Connection::ContinueConnectToClient(PktTimestamp echo_ts)
 
   // Update the connection state.
   state_      = UNCONNECTED;
+  client_id_  = id;
   num_hellos_ = 0;
   hello_timer_.Clear();
 
@@ -2203,7 +2220,7 @@ bool Connection::ContinueConnectToClient(PktTimestamp echo_ts)
   }
 
   // Send a server hello message back to the client.
-  if (!SendConnHndshkPkt(kServerHelloTag, echo_ts))
+  if (!SendConnHndshkPkt(peer_addr_, kServerHelloTag, echo_ts, client_id_))
   {
     timer_.CancelTimer(hello_timer_);
     return false;
@@ -2301,7 +2318,8 @@ bool Connection::CreateCongCtrlObjects(bool is_client)
 }
 
 //============================================================================
-bool Connection::SendConnHndshkPkt(MsgTag tag, PktTimestamp echo_ts)
+bool Connection::SendConnHndshkPkt(const Ipv4Endpoint& dst, MsgTag tag,
+                                   PktTimestamp echo_ts, ClientId id)
 {
   bool  rv = false;
 
@@ -2315,7 +2333,7 @@ bool Connection::SendConnHndshkPkt(MsgTag tag, PktTimestamp echo_ts)
   }
 
   // Create the connection handshake packet.
-  ConnHndshkHeader  ch_hdr(cc_algs_.num_cc_alg, tag, ts, echo_ts,
+  ConnHndshkHeader  ch_hdr(cc_algs_.num_cc_alg, tag, ts, echo_ts, id,
                            cc_algs_.cc_settings);
   Packet*           pkt = framer_.GenerateConnHndshk(ch_hdr);
 
@@ -2326,17 +2344,17 @@ bool Connection::SendConnHndshkPkt(MsgTag tag, PktTimestamp echo_ts)
     return rv;
   }
 
-  // Send the packet to the peer.
-  WriteResult  wr = socket_mgr_.WritePacket(socket_id_, *pkt, peer_addr_);
+  // Send the packet to the specified destination.
+  WriteResult  wr = socket_mgr_.WritePacket(socket_id_, *pkt, dst);
 
   if (wr.status == WRITE_STATUS_OK)
   {
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRISocketId ": Sent connection "
-         "handshake packet: tag %c%c ts %" PRIPktTimestamp " echo_ts %"
-         PRIPktTimestamp "\n", socket_id_,
-         static_cast<int>(ch_hdr.message_tag & 0xFF),
-         static_cast<int>((ch_hdr.message_tag >> 8) & 0xFF), ts, echo_ts);
+         "handshake packet to %s: tag %c%c ts %" PRIPktTimestamp " echo_ts %"
+         PRIPktTimestamp " client_id %" PRIClientId "\n", socket_id_,
+         dst.ToString().c_str(), static_cast<int>(ch_hdr.message_tag & 0xFF),
+         static_cast<int>((ch_hdr.message_tag >> 8) & 0xFF), ts, echo_ts, id);
     for (uint8_t i = 0; i < ch_hdr.num_cc_algs; ++i)
     {
       LogD(kClassName, __func__, "  id %" PRIu8 " type %d det %s pacing %s "
@@ -2353,14 +2371,15 @@ bool Connection::SendConnHndshkPkt(MsgTag tag, PktTimestamp echo_ts)
   else if (wr.status == WRITE_STATUS_BLOCKED)
   {
     LogD(kClassName, __func__, "Conn %" PRISocketId ": Blocked sending "
-         "connection handshake packet.\n", socket_id_);
+         "connection handshake packet to %s.\n", socket_id_,
+         dst.ToString().c_str());
   }
 #endif
   else if (wr.status == WRITE_STATUS_ERROR)
   {
     LogE(kClassName, __func__, "Conn %" PRISocketId ": Error sending "
-         "connection handshake packet: %s.\n", socket_id_,
-         strerror(wr.error_code));
+         "connection handshake packet to %s: %s.\n", socket_id_,
+         dst.ToString().c_str(), strerror(wr.error_code));
   }
 
   // Release the packet.
@@ -3132,7 +3151,7 @@ void Connection::ProcessConnHandshake(ConnHndshkHeader& hdr,
   }
   else if (hdr.message_tag == kRejectTag)
   {
-    ProcessReject(src);
+    ProcessReject(hdr, src);
   }
   else
   {
@@ -3147,6 +3166,20 @@ void Connection::ProcessConnHandshake(ConnHndshkHeader& hdr,
 void Connection::ProcessDataClientHello(ConnHndshkHeader& hdr,
                                         const Ipv4Endpoint& src)
 {
+  // If a client hello has already been received and this client hello did not
+  // come from the same client, then send a reject packet back to the client
+  // and ignore it.
+  if ((state_ != UNCONNECTED) &&
+      ((src != peer_addr_) || (hdr.client_id != client_id_)))
+  {
+    LogW(kClassName, __func__, "Warning, received client hello from non-peer "
+         "%s id %" PRIClientId ", peer is %s id %" PRIClientId ".\n",
+         src.ToString().c_str(), hdr.client_id, peer_addr_.ToString().c_str(),
+         client_id_);
+    SendConnHndshkPkt(src, kRejectTag, hdr.timestamp, hdr.client_id);
+    return;
+  }
+
   if (state_ == SENT_SHLO)
   {
     // Update the timestamp information for use in the server hello timer
@@ -3194,13 +3227,14 @@ void Connection::ProcessDataClientHello(ConnHndshkHeader& hdr,
 
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRISocketId ": Received request for "
-       "connection from client %s.\n", socket_id_, src.ToString().c_str());
+       "connection from client %s client_id %" PRIClientId ".\n", socket_id_,
+       src.ToString().c_str(), hdr.client_id);
 #endif
 
   // Attempt to continue the connection establishment.
-  if (!ContinueConnectToClient(hdr.timestamp))
+  if (!ContinueConnectToClient(hdr.timestamp, hdr.client_id))
   {
-    SendConnHndshkPkt(kRejectTag, hdr.timestamp);
+    SendConnHndshkPkt(peer_addr_, kRejectTag, hdr.timestamp, client_id_);
     state_ = CLOSED;
     app_.ProcessConnectionResult(socket_id_, false);
     conn_mgr_.DeleteConnection(socket_id_);
@@ -3237,11 +3271,11 @@ void Connection::ProcessClientHello(ConnHndshkHeader& hdr,
   CongCtrl  alg[SliqApp::kMaxCcAlgPerConn];
   size_t    num_alg = hdr.ConvertToCongCtrl(alg, SliqApp::kMaxCcAlgPerConn);
 
-  if (num_alg != cc_algs_.num_cc_alg)
+  if (num_alg != hdr.num_cc_algs)
   {
     LogE(kClassName, __func__, "Conn %" PRISocketId ": Error, invalid client "
-         "hello number of congestion control algorithms: %zu\n", socket_id_,
-         num_alg);
+         "hello number of congestion control algorithms: hdr %" PRIu8 " conv "
+         "%zu\n", socket_id_, hdr.num_cc_algs, num_alg);
     return;
   }
 
@@ -3264,18 +3298,33 @@ void Connection::ProcessClientHello(ConnHndshkHeader& hdr,
 
   if (conn != NULL)
   {
+    if (conn->client_id_ == hdr.client_id)
+    {
+      // This is the same client that has already been connected.
 #ifdef SLIQ_DEBUG
-    LogD(kClassName, __func__, "Conn %" PRISocketId ": Duplicate client "
-         "hello packet from %s, ignoring.\n", socket_id_,
-         src.ToString().c_str());
+      LogD(kClassName, __func__, "Conn %" PRISocketId ": Duplicate client "
+           "hello packet from %s id %" PRIClientId ", ignoring.\n",
+           socket_id_, src.ToString().c_str(), hdr.client_id);
 #endif
 
-    // Update the timestamp information for use in the connection's server
-    // hello timer callback while ignoring duplicates.
-    if (hdr.timestamp != client_hello_timestamp_)
+      // Update the timestamp information for use in the connection's server
+      // hello timer callback while ignoring duplicates.
+      if (hdr.timestamp != client_hello_timestamp_)
+      {
+        conn->client_hello_timestamp_ = hdr.timestamp;
+        conn->client_hello_recv_time_ = Time::Now();
+      }
+    }
+    else
     {
-      conn->client_hello_timestamp_ = hdr.timestamp;
-      conn->client_hello_recv_time_ = Time::Now();
+      // This is a different client using the same IP address and port number.
+      // Send a reject packet back to the client.
+      LogW(kClassName, __func__, "Warning, received client hello from %s id %"
+           PRIClientId ", already accepted a peer at %s id %" PRIClientId
+           ".\n", src.ToString().c_str(), hdr.client_id,
+           conn->peer_addr_.ToString().c_str(), conn->client_id_);
+
+      SendConnHndshkPkt(src, kRejectTag, hdr.timestamp, hdr.client_id);
     }
 
     return;
@@ -3283,6 +3332,7 @@ void Connection::ProcessClientHello(ConnHndshkHeader& hdr,
 
   // This client is the current peer for the server listen endpoint.
   peer_addr_ = src;
+  client_id_ = hdr.client_id;
 
   // Create a new connection and initialize it as a server data endpoint.
   EndptId  endpt_id = 0;
@@ -3291,12 +3341,12 @@ void Connection::ProcessClientHello(ConnHndshkHeader& hdr,
                                        packet_pool_, timer_);
 
   if ((conn == NULL) ||
-      (!conn->InitServerData(ntohs(self_addr_.port()), src, alg, num_alg,
-                             endpt_id)))
+      (!conn->InitServerData(ntohs(self_addr_.port()), src, hdr.client_id,
+                             alg, num_alg, endpt_id)))
   {
     LogE(kClassName, __func__, "Conn %" PRISocketId ": Error creating a new "
-         "server data connection for client %s.\n", socket_id_,
-         src.ToString().c_str());
+         "server data connection for client %s id %" PRIClientId ".\n",
+         socket_id_, src.ToString().c_str(), hdr.client_id);
     if (conn != NULL)
     {
       delete conn;
@@ -3310,11 +3360,11 @@ void Connection::ProcessClientHello(ConnHndshkHeader& hdr,
     // Rejected.
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRISocketId ": Application rejected "
-         "request for connection from client %s.\n", socket_id_,
-         src.ToString().c_str());
+         "request for connection from client %s id %" PRIClientId ".\n",
+         socket_id_, src.ToString().c_str(), hdr.client_id);
 #endif
 
-    SendConnHndshkPkt(kRejectTag, hdr.timestamp);
+    SendConnHndshkPkt(peer_addr_, kRejectTag, hdr.timestamp, client_id_);
     delete conn;
     return;
   }
@@ -3322,14 +3372,14 @@ void Connection::ProcessClientHello(ConnHndshkHeader& hdr,
   // Accepted.
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRISocketId ": Application accepted "
-       "request for connection from client %s.\n", socket_id_,
-       src.ToString().c_str());
+       "request for connection from client %s id %" PRIClientId ".\n",
+       socket_id_, src.ToString().c_str(), hdr.client_id);
 #endif
 
   // Attempt to continue the connection establishment.
-  if (!conn->ContinueConnectToClient(hdr.timestamp))
+  if (!conn->ContinueConnectToClient(hdr.timestamp, hdr.client_id))
   {
-    SendConnHndshkPkt(kRejectTag, hdr.timestamp);
+    SendConnHndshkPkt(peer_addr_, kRejectTag, hdr.timestamp, client_id_);
     app_.ProcessConnectionResult(endpt_id, false);
     delete conn;
     return;
@@ -3364,6 +3414,16 @@ void Connection::ProcessServerHello(ConnHndshkHeader& hdr,
   // The connection must be in the SENT_CHLO or CONNECTED state.
   if ((state_ != SENT_CHLO) && (state_ != CONNECTED))
   {
+    return;
+  }
+
+  // The client IDs must match.
+  if (hdr.client_id != client_id_)
+  {
+    LogE(kClassName, __func__, "Conn %" PRISocketId ": Error, server hello "
+         "(source %s) client id %" PRIClientId " does not match local client "
+         "id %" PRIClientId ".\n", socket_id_, src.ToString().c_str(),
+         hdr.client_id, client_id_);
     return;
   }
 
@@ -3408,7 +3468,8 @@ void Connection::ProcessServerHello(ConnHndshkHeader& hdr,
   }
 
   // Send a client confirmation packet back to the server.
-  if (!SendConnHndshkPkt(kClientConfirmTag, hdr.timestamp))
+  if (!SendConnHndshkPkt(peer_addr_, kClientConfirmTag, hdr.timestamp,
+                         client_id_))
   {
     return;
   }
@@ -3515,6 +3576,16 @@ void Connection::ProcessClientConfirm(ConnHndshkHeader& hdr,
     return;
   }
 
+  // The client IDs must match.
+  if (hdr.client_id != client_id_)
+  {
+    LogE(kClassName, __func__, "Conn %" PRISocketId ": Error, client confirm "
+         "(source %s) client id %" PRIClientId " does not match local client "
+         "id %" PRIClientId ".\n", socket_id_, src.ToString().c_str(),
+         hdr.client_id, client_id_);
+    return;
+  }
+
   // The congestion control parameters must match.
   CongCtrl  alg[SliqApp::kMaxCcAlgPerConn];
   size_t    num_alg = hdr.ConvertToCongCtrl(alg, SliqApp::kMaxCcAlgPerConn);
@@ -3609,7 +3680,7 @@ void Connection::ProcessClientConfirm(ConnHndshkHeader& hdr,
 }
 
 //============================================================================
-void Connection::ProcessReject(const Ipv4Endpoint& src)
+void Connection::ProcessReject(ConnHndshkHeader& hdr, const Ipv4Endpoint& src)
 {
   // The connection must be a client data endpoint.
   if ((type_ != CLIENT_DATA) || (!initialized_))
@@ -3622,6 +3693,16 @@ void Connection::ProcessReject(const Ipv4Endpoint& src)
   // The connection must be in the SENT_CHLO state.
   if (state_ != SENT_CHLO)
   {
+    return;
+  }
+
+  // The client IDs must match.
+  if (hdr.client_id != client_id_)
+  {
+    LogE(kClassName, __func__, "Conn %" PRISocketId ": Error, reject (source "
+         "%s) client id %" PRIClientId " does not match local client id %"
+         PRIClientId ".\n", socket_id_, src.ToString().c_str(), hdr.client_id,
+         client_id_);
     return;
   }
 
@@ -3639,6 +3720,10 @@ void Connection::ProcessReject(const Ipv4Endpoint& src)
 
   // Cancel any hello timer.
   timer_.CancelTimer(hello_timer_);
+
+  LogE(kClassName, __func__, "Conn %" PRISocketId ": Error, received "
+       "connection handshake reject from %s.\n", socket_id_,
+       src.ToString().c_str());
 }
 
 //============================================================================
@@ -5314,7 +5399,7 @@ void Connection::ClientHelloTimeout()
     if (StartClientHelloTimer())
     {
       // Send another client hello message to the server.
-      if (SendConnHndshkPkt(kClientHelloTag, 0))
+      if (SendConnHndshkPkt(peer_addr_, kClientHelloTag, 0, client_id_))
       {
         // Record the transmission.
         num_hellos_++;
@@ -5371,7 +5456,7 @@ void Connection::ServerHelloTimeout()
                    static_cast<PktTimestamp>(delta.GetTimeInUsec()));
       }
 
-      if (SendConnHndshkPkt(kServerHelloTag, echo_ts))
+      if (SendConnHndshkPkt(peer_addr_, kServerHelloTag, echo_ts, client_id_))
       {
         // Record the transmission.
         num_hellos_++;

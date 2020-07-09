@@ -310,12 +310,6 @@ namespace iron
     /// The maximum line rate in kbps.
     double               max_line_rate_;
 
-    /// The local IPv4 address and UDP port number.
-    iron::Ipv4Endpoint   local_endpt_;
-
-    /// The remote IPv4 address and UDP port number.
-    iron::Ipv4Endpoint   remote_endpt_;
-
     /// The file descriptor for the UDP socket.
     int                  udp_fd_;
 

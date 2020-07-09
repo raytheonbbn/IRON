@@ -108,8 +108,9 @@ enum HeaderType
 
 
 //  ================ SLIQ Connection Handshake Headers ================
-const size_t kConnHndshkHdrBaseSize  = 12;
-const size_t kConnHndshkHdrCcAlgSize = 8;
+const size_t kConnHndshkHdrBaseSize     = 12;
+const size_t kConnHndshkHdrCcAlgSize    = 8;
+const size_t kConnHndshkHdrClientIdSize = 4;
 
 struct ConnHndshkHdrBase
 {
@@ -126,6 +127,11 @@ struct ConnHndshkHdrCcAlg
   uint8_t   cc_flags;
   uint16_t  cc_unused;
   uint32_t  cc_params;
+} __attribute__((packed));
+
+struct ConnHndshkHdrClientId
+{
+  uint32_t  client_id;
 } __attribute__((packed));
 
 

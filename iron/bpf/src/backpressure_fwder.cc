@@ -628,7 +628,8 @@ bool BPFwder::Initialize()
 
     if (path_ctrl == NULL)
     {
-      LogW(kClassName, __func__, "Unable to create new Path Controller.\n");
+      LogW(kClassName, __func__, "Unable to create new Path Controller %"
+           PRIu32 " .\n",  i);
       return false;
     }
 
@@ -652,8 +653,28 @@ bool BPFwder::Initialize()
         (!path_ctrl->ConfigurePddReporting(kPddThresh, kPddMinPeriodSec,
                                            kPddMaxPeriodSec)))
     {
-      LogE(kClassName, __func__, "Unable to Initialize Path Controller.\n");
+      LogE(kClassName, __func__, "Unable to Initialize Path Controller %"
+           PRIu32 ".\n", i);
       return false;
+    }
+
+    // Detect if the endpoints for the path controller have been reused.  This
+    // is an error.
+    Ipv4Endpoint  new_local_endpoint  = path_ctrl->local_endpt();
+    Ipv4Endpoint  new_remote_endpoint = path_ctrl->remote_endpt();
+
+    for (uint32_t j = 0; j < i; j++)
+    {
+      if ((path_ctrls_[j].path_ctrl != NULL) &&
+          (path_ctrls_[j].path_ctrl->local_endpt() == new_local_endpoint) &&
+          (path_ctrls_[j].path_ctrl->remote_endpt() == new_remote_endpoint))
+      {
+        LogE(kClassName, __func__, "Error, Path Controller %" PRIu32 " has "
+             "same endpoints (%s->%s) as Path Controller %" PRIu32 ".\n", i,
+             new_local_endpoint.ToString().c_str(),
+             new_remote_endpoint.ToString().c_str(), j);
+        return false;
+      }
     }
 
     // Initialize the graphing of received QLAMs if needed.
