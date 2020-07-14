@@ -10,5 +10,5 @@ utility files:
 - processTraffFile.m
 - updateVirTopology.m
 
-The above utility files are located in the IRON/analysis/matlab/Utilities
+The above utility files are located in the analysis/matlab/Utilities
 directory.
