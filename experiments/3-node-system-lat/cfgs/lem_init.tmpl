@@ -123,24 +123,24 @@ LEC_BIN=${HOME}/iron_exp_staging/bin/LinkEmClient
 
 # Enclave 1 LinkEm configuration.
 ${LEC_BIN} -h $enclave1_le1_node$ -P 2 -s $enclave2_iron_wan1_addr$/32
-${LEC_BIN} -h $enclave1_le1_node$ -P 2 -I 1 buffer:350000
-${LEC_BIN} -h $enclave1_le1_node$ -P 2 -I 2 buffer:350000 -t 10000 -d 70 -E SPER -J None
+${LEC_BIN} -h $enclave1_le1_node$ -P 2 -I 1 -b 350000
+${LEC_BIN} -h $enclave1_le1_node$ -P 2 -I 2 -b 350000 -t 10000 -d 70 -E SPER -J None
 ${LEC_BIN} -h $enclave1_le1_node$ -P 3 -s $enclave3_iron_wan1_addr$/32
-${LEC_BIN} -h $enclave1_le1_node$ -P 3 -I 1 buffer:20000
-${LEC_BIN} -h $enclave1_le1_node$ -P 3 -I 2 buffer:20000 -t 10000 -d 1 -E SPER -J None
+${LEC_BIN} -h $enclave1_le1_node$ -P 3 -I 1 -b 20000
+${LEC_BIN} -h $enclave1_le1_node$ -P 3 -I 2 -b 20000 -t 10000 -d 1 -E SPER -J None
 
 # Enclave 2 LinkEm configuration.
 ${LEC_BIN} -h $enclave2_le1_node$ -P 1 -s $enclave1_iron_wan1_addr$/32
-${LEC_BIN} -h $enclave2_le1_node$ -P 1 -I 1 buffer:350000
-${LEC_BIN} -h $enclave2_le1_node$ -P 1 -I 2 buffer:350000 -t 10000 -d 70 -E SPER -J None
+${LEC_BIN} -h $enclave2_le1_node$ -P 1 -I 1 -b 350000
+${LEC_BIN} -h $enclave2_le1_node$ -P 1 -I 2 -b 350000 -t 10000 -d 70 -E SPER -J None
 ${LEC_BIN} -h $enclave2_le1_node$ -P 3 -s $enclave3_iron_wan1_addr$/32
-${LEC_BIN} -h $enclave2_le1_node$ -P 3 -I 1 buffer:20000
-${LEC_BIN} -h $enclave2_le1_node$ -P 3 -I 2 buffer:20000 -t 10000 -d 1 -E SPER -J None
+${LEC_BIN} -h $enclave2_le1_node$ -P 3 -I 1 -b 20000
+${LEC_BIN} -h $enclave2_le1_node$ -P 3 -I 2 -b 20000 -t 10000 -d 1 -E SPER -J None
 
 # Enclave 3 LinkEm configuration.
 ${LEC_BIN} -h $enclave3_le1_node$ -P 1 -s $enclave1_iron_wan1_addr$/32
-${LEC_BIN} -h $enclave3_le1_node$ -P 1 -I 1 buffer:20000
-${LEC_BIN} -h $enclave3_le1_node$ -P 1 -I 2 buffer:20000 -t 10000 -d 1 -E SPER -J None
+${LEC_BIN} -h $enclave3_le1_node$ -P 1 -I 1 -b 20000
+${LEC_BIN} -h $enclave3_le1_node$ -P 1 -I 2 -b 20000 -t 10000 -d 1 -E SPER -J None
 ${LEC_BIN} -h $enclave3_le1_node$ -P 2 -s $enclave2_iron_wan1_addr$/32
-${LEC_BIN} -h $enclave3_le1_node$ -P 2 -I 1 buffer:20000
-${LEC_BIN} -h $enclave3_le1_node$ -P 2 -I 2 buffer:20000 -t 10000 -d 1 -E SPER -J None
+${LEC_BIN} -h $enclave3_le1_node$ -P 2 -I 1 -b 20000
+${LEC_BIN} -h $enclave3_le1_node$ -P 2 -I 2 -b 20000 -t 10000 -d 1 -E SPER -J None
