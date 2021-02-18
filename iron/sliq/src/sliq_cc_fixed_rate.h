@@ -344,23 +344,22 @@ namespace sliq
     /// \return  The amount of time until the next send can occur.
     virtual iron::Time TimeUntilSend(const iron::Time& now);
 
-    /// \brief Get the current pacing rate, in bits per second.
+    /// \brief Get the current send pacing rate.
     ///
     /// May be zero if the rate is unknown.
     ///
-    /// Note that the pacing rate might be higher than the computed congestion
-    /// control rate for window-based congestion controls to ensure that the
-    /// congestion window gets filled completely.
+    /// Note that the send pacing rate might be higher than the send rate for
+    /// window-based congestion controls to ensure that the congestion window
+    /// gets filled completely.
     ///
-    /// \return  The pacing rate of the congestion control algorithm, in bits
-    ///          per second.
-    virtual Capacity PacingRate();
+    /// \return  The current send pacing rate, in bits per second.  May be
+    ///          zero.
+    virtual Capacity SendPacingRate();
 
-    /// \brief Get the current estimated channel capacity, in bits per second.
+    /// \brief Get the current send rate.
     ///
-    /// \return  The current estimated channel capacity, in bits per second,
-    ///          or 0 if there is no estimate.
-    virtual Capacity CapacityEstimate();
+    /// \return  The current send rate, in bits per second.
+    virtual Capacity SendRate();
 
     /// \brief Get any optional congestion control parameters that must be
     /// transferred to the other end of the connection.

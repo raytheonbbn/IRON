@@ -115,6 +115,11 @@ make_pdf () {
     fi
 }
 
+### call after trpr before gnuplot to create a plot with a log y axis scale
+make_logy () {
+    sed -i 's/set yrange.*/set yrange\[1.000000\:\*\]\nset logscale y/g' trprResults
+}
+
 ### Evaluate a python script.  cwd must be runN/nodeN.  The script is
 ### expected to evaluate a single node's data.  Arguments to the
 ### script are in $ARGS; arguments to this function are ignored.  If
@@ -221,15 +226,52 @@ bash_eval () {
 ### mgen goodput, latency, loss
 plot_mgen () {
     if [ -e $LOGS_DIR/mgen.log ]; then  
-        PLOT_TYPE=$(echo $ARGS | cut -d ' ' -f2)
-        FORMAT=$(echo $ARGS | cut -d ' ' -f3)
-        LINE_TYPE=$(echo $ARGS | cut -d ' ' -f4)
-        KEY=$(echo $ARGS | cut -d ' ' -f5)  
-        RAMP=$(echo $ARGS | cut -d ' ' -f6) 
-        WINDOW=1.0
         NUM_PARAM=$(echo $ARGS | wc -w)
-        if [ $NUM_PARAM -eq 7 ]; then
-            REGRESS=$(echo $ARGS | cut -d ' ' -f7)
+
+        if [ $NUM_PARAM -ge 2 ]; then
+            PLOT_TYPE=$(echo $ARGS | cut -d ' ' -f2)
+	else
+	    PLOT_TYPE=goodput
+	fi
+	
+        if [ $NUM_PARAM -ge 3 ]; then	
+            FORMAT=$(echo $ARGS | cut -d ' ' -f3)
+	else
+	    FORMAT=png
+	fi
+	
+        if [ $NUM_PARAM -ge 4 ]; then	
+            LINE_TYPE=$(echo $ARGS | cut -d ' ' -f4)
+	else
+	    LINE_TYPE=lines
+	fi
+
+        if [ $NUM_PARAM -ge 5 ]; then	
+            KEY=$(echo $ARGS | cut -d ' ' -f5)
+	else
+	    KEY=nokey
+	fi
+	
+        if [ $NUM_PARAM -ge 6 ]; then	
+            RAMP=$(echo $ARGS | cut -d ' ' -f6)
+	else
+	    RAMP=noramp
+	fi
+
+        if [ $NUM_PARAM -ge 7 ]; then	
+            WINDOW=$(echo $ARGS | cut -d ' ' -f7)
+	else
+	    WINDOW=1.0
+	fi
+	
+        if [ $NUM_PARAM -ge 8 ]; then
+            YSCALE=$(echo $ARGS | cut -d ' ' -f8) 
+	else
+	    YSCALE=linear
+	fi
+	
+        if [ $NUM_PARAM -ge 9 ]; then
+            REGRESS=$(echo $ARGS | cut -d ' ' -f9)
             if [ "${REGRESS}" != regress ]; then
                 echo "Bad regress argument /$REGRESS/"
                 exit 1
@@ -252,18 +294,27 @@ plot_mgen () {
         sed -i \
             's/set term png/set term png size 800, 400\nset size ratio .6/g' \
             trprResults
-        if [ $KEY == key ]; then
+
+	if [ $KEY == "key" ]; then
             add_key_to_graph
         else
             remove_key
         fi
-        if [ $FORMAT == pdf ]; then
+
+	if [ $FORMAT == "pdf" ]; then
             make_pdf
         fi
-        if [ $LINE_TYPE == nolines ]; then
+
+	if [ $LINE_TYPE == "nolines" ]; then
             remove_lines_from_graph
         fi
+
+	if [ $YSCALE == "log" ]; then
+	    make_logy
+	fi
+	
         gnuplot trprResults
+	
         if [ $FORMAT == "pdf" ]; then
             epstopdf mgen.eps
             rm mgen.eps

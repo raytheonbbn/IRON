@@ -1,4 +1,4 @@
-all: calctest condsystest condsmpltest aectablegen aecsim lookup convtables
+all: calctest condsystest condsmpltest aectablegen aecsim lookup efficiency sliqmode convtables
 
 calctest: calctest.o CalculateFECRate.o
 	g++ calctest.o CalculateFECRate.o -o calctest
@@ -23,6 +23,16 @@ lookup: lookup.o CalculateFECRate.o CallocND.o \
 	g++ lookup.o CalculateFECRate.o CallocND.o \
 	       setupDofLookupTables.o -o lookup
 
+efficiency: efficiency.o CalculateFECRate.o CallocND.o \
+	       setupDofLookupTables.o
+	g++ efficiency.o CalculateFECRate.o CallocND.o \
+	       setupDofLookupTables.o -o efficiency
+
+sliqmode: sliqmode.o CalculateFECRate.o CallocND.o \
+	       setupDofLookupTables.o
+	g++ sliqmode.o CalculateFECRate.o CallocND.o \
+	       setupDofLookupTables.o -o sliqmode
+
 convtables: convtables.o CalculateFECRate.o CallocND.o \
 	       setupDofLookupTables.o
 	g++ convtables.o CalculateFECRate.o CallocND.o \
@@ -46,6 +56,12 @@ aecsim.o: aecsim.cc CalculateFECRate.h CallocND.h setupDofLookupTables.h
 lookup.o: lookup.cc CalculateFECRate.h CallocND.h setupDofLookupTables.h
 	g++ -c lookup.cc
 
+efficiency.o: efficiency.cc CalculateFECRate.h CallocND.h setupDofLookupTables.h
+	g++ -c efficiency.cc
+
+sliqmode.o: sliqmode.cc doflutparms.h sliqmode.h CalculateFECRate.h CallocND.h setupDofLookupTables.h
+	g++ -c sliqmode.cc
+
 convtables.o: convtables.cc CalculateFECRate.h CallocND.h setupDofLookupTables.h
 	g++ -c convtables.cc
 
@@ -57,9 +73,10 @@ setupDofLookupTables.o: setupDofLookupTables.cc setupDofLookupTables.h doflutpar
 
 clean:
 	rm -f calctest condsystest condsmpltest \
-	aectablegen aecsim lookup convtables \
+	aectablegen aecsim lookup efficiency sliqmode \
+	convtables \
 	calctest.o condsystest.o \
 	condsmpltest.o aectablegen.o aecsim.o lookup.o \
-	CalculateFECRate.o CallocND.o \
+	efficiency.o sliqmode.o CalculateFECRate.o CallocND.o \
 	setupDofLookupTables.o convtables.o
 

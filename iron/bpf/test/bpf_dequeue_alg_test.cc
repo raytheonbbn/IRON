@@ -38,6 +38,7 @@
 #include <cppunit/extensions/HelperMacros.h>
 
 #include "backpressure_fwder.h"
+#include "backpressure_dequeue_alg.h"
 #include "gradient.h"
 #include "path_controller.h"
 #include "queue_store.h"
@@ -60,7 +61,6 @@
 #include "packet_creator.h"
 #include "port_number_mgr.h"
 #include "timer.h"
-#include "uber_fwd_alg.h"
 #include "unused.h"
 #include "zombie.h"
 #include "zombie_queue.h"
@@ -74,6 +74,7 @@
 
 
 using ::iron::BinId;
+using ::iron::BPDequeueAlg;
 using ::iron::BPFwder;
 using ::iron::ConfigInfo;
 using ::iron::FifoIF;
@@ -84,7 +85,6 @@ using ::iron::OrderedList;
 using ::iron::PacketCreator;
 using ::iron::PACKET_NOW_TIMESTAMP;
 using ::iron::PathController;
-using ::iron::UberFwdAlg;
 using ::iron::Zombie;
 
 using ::std::map;
@@ -94,7 +94,7 @@ using ::std::vector;
 
 namespace
 {
-  const char*   UNUSED(kClassName)  = "BpfUberAlgTester";
+  const char*   UNUSED(kClassName)  = "BpfDequeueAlgTester";
 
   const uint8_t kNumSolutions       = 10;
 }
@@ -112,7 +112,7 @@ namespace
 // The QueueStore is the default algorithm, which is base (no heavy ball)
 // as of 10Feb16.
 
-class BpfAlgTester : public BPFwder, public UberFwdAlg
+class BpfAlgTester : public BPFwder, public BPDequeueAlg
 {
 public:
 
@@ -307,9 +307,9 @@ BpfAlgTester::BpfAlgTester(iron::PacketPool& packet_pool, iron::BinMap& bin_map,
                            vector<iron::PseudoFifo*>* fifos, ConfigInfo& ci)
   : BPFwder(packet_pool, timer, bin_map, weight_qd_shared_memory,
             BPF_FIFO_ARGS(fifos), ci),
-    UberFwdAlg(*this, packet_pool, bin_map, BPFwder::queue_store_,
-               BPFwder::packet_history_mgr_,
-               BPFwder::num_path_ctrls_, BPFwder::path_ctrls_),
+    BPDequeueAlg(*this, packet_pool, bin_map, BPFwder::queue_store_,
+                 BPFwder::packet_history_mgr_,
+                 BPFwder::num_path_ctrls_, BPFwder::path_ctrls_),
     queue_store_(BPFwder::queue_store_),
     pkt_pool_(packet_pool),
     bin_map_(bin_map),
@@ -326,10 +326,10 @@ BpfAlgTester::~BpfAlgTester()
 void BpfAlgTester::InitForTest(iron::ConfigInfo& ci)
 {
   CPPUNIT_ASSERT(BPFwder::Initialize());
-  UberFwdAlg::queue_store_  = BPFwder::queue_store_;
-  UberFwdAlg::Initialize(ci);
-  UberFwdAlg::packet_history_mgr_ = BPFwder::packet_history_mgr_;
-  bpf_fwd_alg_->set_xmit_buf_max_thresh(3000);
+  BPDequeueAlg::queue_store_  = BPFwder::queue_store_;
+  BPDequeueAlg::Initialize(ci);
+  BPDequeueAlg::packet_history_mgr_ = BPFwder::packet_history_mgr_;
+  bpf_dequeue_alg_->set_xmit_buf_max_thresh(3000);
 
   iron::BinIndex bidx_2 = bin_map_.GetPhyBinIndex(2);
   iron::BinIndex bidx_3 = bin_map_.GetPhyBinIndex(3);
@@ -360,7 +360,7 @@ void BpfAlgTester::InitForTest(iron::ConfigInfo& ci)
     }
   }
 
-  bpf_fwd_alg_->set_hysteresis(10);
+  bpf_dequeue_alg_->set_hysteresis(10);
 }
 
 //============================================================================
@@ -407,7 +407,7 @@ bool BpfAlgTester::CallGetMinLatency(uint32_t* latency_us, size_t num_latencies,
                                  size_t& min_path_ctrl_index,
                                  iron::Time& min_ttr)
 {
-  return this->bpf_fwd_alg_->GetMinLatencyPath(latency_us, num_latencies,
+  return this->bpf_dequeue_alg_->GetMinLatencyPath(latency_us, num_latencies,
     min_path_ctrl_index, min_ttr);
 }
 
@@ -416,7 +416,7 @@ bool BpfAlgTester::CallIsHistoryConstrained(iron::Packet* pkt, iron::Time& ttg,
                                             uint32_t* latencies_us,
                                             size_t num_latencies)
 {
-  return UberFwdAlg::IsHistoryConstrained(pkt, ttg, latencies_us,
+  return BPDequeueAlg::IsHistoryConstrained(pkt, ttg, latencies_us,
     num_latencies);
 }
 
@@ -427,8 +427,8 @@ bool BpfAlgTester::CallFindUcastPacketsForGradient(
   OrderedList<TransmitCandidate, iron::Time>& candidates,
   uint32_t max_bytes)
 {
-  return UberFwdAlg::FindUcastPacketsForGradient(gradient, ttype, method_start,
-    consider_latency, candidates, max_bytes);
+  return BPDequeueAlg::FindUcastPacketsForGradient(
+    gradient, ttype, method_start, consider_latency, candidates, max_bytes);
 }
 
 //============================================================================
@@ -500,7 +500,7 @@ bool BpfAlgTester::CallFindNextTransmission(iron::TxSolution* solutions,
   solutions[0].path_ctrl_index  = 0;
 
   num_solutions                 =
-    bpf_fwd_alg_->FindNextTransmission(solutions, num_solutions);
+    bpf_dequeue_alg_->FindNextTransmission(solutions, num_solutions);
 
   return num_solutions > 0;
 }
@@ -1128,7 +1128,7 @@ public:
 
     iron::Time          now   = iron::Time::Now();
 
-    OrderedList<UberFwdAlg::TransmitCandidate, iron::Time>
+    OrderedList<BPDequeueAlg::TransmitCandidate, iron::Time>
       candidates(iron::LIST_INCREASING);
 
     int32_t max_bytes = 10000;
@@ -1162,7 +1162,7 @@ public:
     CPPUNIT_ASSERT(bpfwder_->CallFindUcastPacketsForGradient(gradient,
       ttype, now, false, candidates, static_cast<uint32_t>(max_bytes)));
 
-    UberFwdAlg::TransmitCandidate cand;
+    BPDequeueAlg::TransmitCandidate cand;
     CPPUNIT_ASSERT(candidates.size() == 1);
     CPPUNIT_ASSERT(candidates.Peek(cand));
     CPPUNIT_ASSERT(cand.pkt == p0);

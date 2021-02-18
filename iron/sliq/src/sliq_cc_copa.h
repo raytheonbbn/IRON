@@ -48,22 +48,47 @@
 
 namespace sliq
 {
-  /// \brief The Copa utility modes.
-  enum CopaMode
+  /// \brief The Copa Beta 1 utility modes.
+  enum CopaBeta1Mode
   {
     CONSTANT_DELTA,
     MAX_THROUGHPUT
   };
 
-  /// \brief The Copa send-side congestion control algorithm.
+  /// \brief The first Beta version of the Copa send-side congestion control
+  /// algorithm.
+  ///
+  /// Implements the Copa algorithm as described in the following paper:
+  ///
+  ///   Arun, V., and Balakrishnan, H.  The Case for Switch Delay in Endpoint
+  ///   Congestion Contol.  Submitted to HotNets (2016).
   ///
   /// May operate with either deterministic inter-send times (Deterministic
-  /// Copa) or randomized inter-send times (Copa).  May operate with a fixed
-  /// delta value or with a policy controller that selects the proper delta
-  /// value dynamically.
+  /// Copa) or randomized inter-send times (Copa).  May operate with either a
+  /// fixed delta value (e.g., Copa 0.1) or with a policy controller that
+  /// selects the proper delta value dynamically (e.g., Copa M).
+  ///
+  /// Note the following deviations:
+  /// - This implementation contains numerous minor changes based on looking
+  ///   at MIT's software implementation of this algorithm and conversations
+  ///   with MIT.
+  /// - Of all of the Policy Controllers discussed in the paper, only the
+  ///   Maximum Throughput Policy Controller (Copa M) has been implemented.
+  /// - When operating with the Maximum Throughput Policy Controller, the
+  ///   computed delta values are exchanged between endpoints using Congestion
+  ///   Control Synchronization headers to provide symmetric bi-directional
+  ///   send rate performance.
+  /// - An experimental minimum RTT tracking algorithm developed by BBN was
+  ///   added.  To enable this algorithm, add the "-DSLIQ_COPA1_MRT" flag to
+  ///   the OPT_FLAGS definition in the makefile and recompile.
+  ///
+  /// This version of Copa is the initial Beta version of the algorithm (Beta
+  /// 1).  MIT substantially updated the protocol after this version was
+  /// created.  The final version of Copa should be used instead of this
+  /// version.
   ///
   /// Note that this class is not thread-safe.
-  class Copa : public CongCtrlInterface
+  class CopaBeta1 : public CongCtrlInterface
   {
 
    public:
@@ -74,10 +99,10 @@ namespace sliq
     /// \param  is_client  The flag determining if this is the client or
     ///                    server side of the connection.
     /// \param  rng        A reference to the random number generator.
-    Copa(EndptId conn_id, bool is_client, iron::RNG& rng);
+    CopaBeta1(EndptId conn_id, bool is_client, iron::RNG& rng);
 
     /// \brief Destructor.
-    virtual ~Copa();
+    virtual ~CopaBeta1();
 
     /// \brief Configure the congestion control algorithm.
     ///
@@ -347,23 +372,22 @@ namespace sliq
     /// \return  The amount of time until the next send can occur.
     virtual iron::Time TimeUntilSend(const iron::Time& now);
 
-    /// \brief Get the current pacing rate, in bits per second.
+    /// \brief Get the current send pacing rate.
     ///
     /// May be zero if the rate is unknown.
     ///
-    /// Note that the pacing rate might be higher than the computed congestion
-    /// control rate for window-based congestion controls to ensure that the
-    /// congestion window gets filled completely.
+    /// Note that the send pacing rate might be higher than the send rate for
+    /// window-based congestion controls to ensure that the congestion window
+    /// gets filled completely.
     ///
-    /// \return  The pacing rate of the congestion control algorithm, in bits
-    ///          per second.
-    virtual Capacity PacingRate();
+    /// \return  The current send pacing rate, in bits per second.  May be
+    ///          zero.
+    virtual Capacity SendPacingRate();
 
-    /// \brief Get the current estimated channel capacity, in bits per second.
+    /// \brief Get the current send rate.
     ///
-    /// \return  The current estimated channel capacity, in bits per second,
-    ///          or 0 if there is no estimate.
-    virtual Capacity CapacityEstimate();
+    /// \return  The current send rate, in bits per second.
+    virtual Capacity SendRate();
 
     /// \brief Get any optional congestion control parameters that must be
     /// transferred to the other end of the connection.
@@ -444,10 +468,10 @@ namespace sliq
    private:
 
     /// \brief Copy constructor.
-    Copa(const Copa& c);
+    CopaBeta1(const CopaBeta1& c);
 
     /// \brief Assignment operator.
-    Copa& operator=(const Copa& c);
+    CopaBeta1& operator=(const CopaBeta1& c);
 
     /// \brief Get the current time as a double.
     ///
@@ -489,16 +513,20 @@ namespace sliq
     /// \param  now  The current time.
     void UpdateIntersendTime(const iron::Time& now);
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
 
     /// \brief Update the minimum RTT estimate.
     void UpdateMinRtt();
 
-#endif
+#endif // SLIQ_COPA1_MRT
 
     /// \brief A structure for unACKed packet data.
     struct PacketData
     {
+      PacketData() : cc_seq_num(0), min_rtt_index(0), flags(0),
+                     send_time(0.0), intersend_time(0.0) {}
+      virtual ~PacketData() {}
+
       /// The packet's congestion control sequence number.
       PktSeqNumber  cc_seq_num;
 
@@ -518,6 +546,10 @@ namespace sliq
     /// \brief A structure for minimum RTT tracking packet data.
     struct MinRttPktData
     {
+      MinRttPktData() : send_time(0.0), sent_bytes(0.0) {}
+
+      virtual ~MinRttPktData() {}
+
       /// The packet's send time.
       double  send_time;
 
@@ -528,6 +560,10 @@ namespace sliq
     /// \brief A structure for minimum RTT tracking line fitting data.
     struct MinRttLineData
     {
+      MinRttLineData() : x_queued_kbytes(0.0), y_rtt_msec(0.0) {}
+
+      virtual ~MinRttLineData() {}
+
       /// The number of kilobytes in the bottleneck queue when the packet was
       /// sent (X-axis).
       double  x_queued_kbytes;
@@ -620,8 +656,8 @@ namespace sliq
     /// The random number generator.
     iron::RNG&              rng_;
 
-    /// The current Copa utility mode.
-    CopaMode                mode_;
+    /// The current Copa Beta 1 utility mode.
+    CopaBeta1Mode           mode_;
 
     /// The setting for randomizing inter-send times.
     bool                    random_send_;
@@ -663,7 +699,7 @@ namespace sliq
     /// una_cc_seq_num_ up to (but not including) nxt_cc_seq_num_.
     PacketData*             unacked_pkts_;
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
 
     // The minimum RTT tracking dataset counter used for debug logging.
     uint32_t                mrt_cnt_;
@@ -685,7 +721,7 @@ namespace sliq
     /// The array of minimum RTT tracking line fitting data.
     MinRttLineData*         mrt_line_;
 
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
     /// The start time, used for computing a floating point time.
     iron::Time              start_time_point_;
@@ -732,7 +768,7 @@ namespace sliq
     /// The total number of packets lost.
     uint64_t                num_pkts_lost_;
 
-  }; // end class Copa
+  }; // end class CopaBeta1
 
 }; // namespace sliq
 

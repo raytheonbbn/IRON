@@ -841,30 +841,30 @@ Time Cubic::TimeUntilSend(const Time& now)
 }
 
 //============================================================================
-Capacity Cubic::PacingRate()
+Capacity Cubic::SendPacingRate()
 {
   double  rate_bps = ComputePacingRate();
 
 #ifdef SLIQ_CC_DEBUG
-  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Pacing rate %f bps.\n",
-       conn_id_, rate_bps);
+  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Send pacing rate %f "
+       "bps.\n", conn_id_, rate_bps);
 #endif
 
   return static_cast<Capacity>(rate_bps);
 }
 
 //============================================================================
-Capacity Cubic::CapacityEstimate()
+Capacity Cubic::SendRate()
 {
-  // The current rate in bps is:  rate = ((cwnd * 8) / srtt)
+  // The current send rate in bps is:  rate = ((cwnd * 8) / srtt)
   Time    srtt     = rtt_mgr_.smoothed_rtt();
   double  rate_bps = ((static_cast<double>(cwnd_) * 8.0 *
                        kNumMicrosPerSecond) /
                       static_cast<double>(srtt.GetTimeInUsec()));
 
 #ifdef SLIQ_CC_DEBUG
-  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Capacity estimate %f "
-       "bps.\n", conn_id_, rate_bps);
+  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Send rate %f bps.\n",
+       conn_id_, rate_bps);
 #endif
 
   return static_cast<Capacity>(rate_bps);

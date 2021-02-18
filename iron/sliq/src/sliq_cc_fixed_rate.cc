@@ -283,13 +283,13 @@ Time FixedRate::TimeUntilSend(const Time& now)
 }
 
 //============================================================================
-Capacity FixedRate::PacingRate()
+Capacity FixedRate::SendPacingRate()
 {
   return send_rate_bps_;
 }
 
 //============================================================================
-Capacity FixedRate::CapacityEstimate()
+Capacity FixedRate::SendRate()
 {
   return send_rate_bps_;
 }

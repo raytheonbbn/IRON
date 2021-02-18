@@ -35,25 +35,6 @@
  */
 /* IRON: end */
 
-//============================================================================
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-//============================================================================
-
 #include "sliq_sent_packet_manager.h"
 
 #include "sliq_app.h"
@@ -69,8 +50,8 @@
 #include <math.h>
 
 
-using ::sliq::FecBlock;
 using ::sliq::FecRound;
+using ::sliq::FecSize;
 using ::sliq::PktSeqNumber;
 using ::sliq::PktTimestamp;
 using ::sliq::RetransCount;
@@ -105,27 +86,50 @@ namespace
   /// Sent packet information flag for fast retransmit candidate reporting.
   const uint8_t       kCand               = 0x20;
 
+  /// FEC group flag for pure ARQ mode.
+  const uint8_t       kFecPureArq         = 0x01;
+
+  /// FEC group flag for latency sensitive traffic.
+  const uint8_t       kFecLatSens         = 0x02;
+
+  /// FEC group flag for forcing the end of the group.
+  const uint8_t       kFecForceEnd        = 0x04;
+
   /// The distance between a packet and the current largest observed packet to
   /// consider a packet lost, and for a fast retransmission to take place.
   /// This is an adaptation of the TCP 3 duplicate ACKs rule (RFC 5681,
   /// section 3.2).
   const int           kFastRexmitDist     = 3;
 
-  /// The size of the 3D FEC lookup tables in number of elements.
-  const size_t        kFecTableSize       = (kNumSrcPkts * kNumSrcPkts *
-                                             kNumSrcPkts);
+  /// The size of each set of triangle tables in the FEC lookup table in
+  /// number of elements.  These tables are stored as efficiently as possible.
+  /// The sizes of the tables add up as follows as k goes from 1 to 10:
+  /// 1+3+6+10+15+21+28+36+45+55 = 220.
+  const size_t        kFecTriTableSize    = 220;
 
-  /// The minimum number of FEC source packets in an FEC block (coding K
-  /// value).
-  const FecBlock      kMinK               = 1;
+  /// The size of each 4D FEC lookup table in number of elements.  The
+  /// dimensions are [p][k][sr][cr], where p is the PER, k is the number of
+  /// source packets per group, sr is the number of source packets received,
+  /// and cr is the number of coded packets received.  Note that [k][sr][cr]
+  /// is a series of triangle tables that are stored as efficiently as
+  /// possible.
+  const size_t        kFecTableSize       = (kNumPers * kFecTriTableSize);
 
-  /// The maximum number of FEC source packets in an FEC block (coding K
-  /// value).
-  const FecBlock      kMaxK               = kNumSrcPkts;
+  /// The minimum target number of rounds (N).
+  const FecRound      kMinN               = 1;
+
+  /// The maximum target number of rounds (N).
+  const FecRound      kMaxN               = kNumRounds;
+
+  /// The minimum number of FEC source packets in an FEC group (k).
+  const FecSize       kMinK               = 1;
+
+  /// The maximum number of FEC source packets in an FEC group (k).
+  const FecSize       kMaxK               = kNumSrcPkts;
 
   /// The number of consecutive FEC groups sent without an early ACK being
   /// received for the number of FEC source packets to be increased.
-  const FecBlock      kFecAckAfterGrpCnt  = 16;
+  const FecSize       kFecAckAfterGrpCnt  = 16;
 
   /// The number of FEC groups required for storing FEC information.
   const WindowSize    kFecGroupSize       = ((sliq::kFlowCtrlWindowPkts /
@@ -133,7 +137,7 @@ namespace
 
   /// The size, in packets, of the queue for original FEC encoded data
   /// packets (unsent FEC encoded packets generated in round 1).
-  const WindowSize    kOrigFecEncQSize    = sliq::kMaxFecBlockLengthPkts;
+  const WindowSize    kOrigFecEncQSize    = sliq::kMaxFecGroupLengthPkts;
 
   /// The size, in packets, of the queue for additional FEC encoded data
   /// packets (unsent FEC encoded packets generated in round 2+).
@@ -148,6 +152,9 @@ namespace
   /// The alpha factor for tracking the amount of time allowed for sending the
   /// FEC source packets in each group using an EWMA estimator.
   const double        kDurAlpha           = 0.25;
+
+  /// The packet overhead due to IP (20 bytes) and UDP (8 bytes), in bytes.
+  const size_t        kPktOverheadBytes   = 28;
 }
 
 
@@ -171,12 +178,16 @@ namespace
 #define CLEAR_CAND(info)     (info).flags_ &= ~kCand
 
 
-/// Macro for computing the index into the 3D FEC lookup tables.  Arguments
-/// are the number of FEC source packets, the number of FEC source packets
-/// received, and the number of FEC encoded packets received.
-#define TABLE_OFFSET(ns, sr, er)                                        \
-  ((static_cast<size_t>((ns) - 1) * kNumSrcPkts * kNumSrcPkts) +        \
-   (static_cast<size_t>(sr) * kNumSrcPkts) + static_cast<size_t>(er));
+// Macros for FEC group information.
+#define IS_PURE_ARQ(info)   (((info).fec_flags_ & kFecPureArq) != 0)
+#define IS_LAT_SENS(info)   (((info).fec_flags_ & kFecLatSens) != 0)
+#define IS_FORCE_END(info)  (((info).fec_flags_ & kFecForceEnd) != 0)
+
+#define SET_PURE_ARQ(info)   (info).fec_flags_ |= kFecPureArq
+#define SET_LAT_SENS(info)   (info).fec_flags_ |= kFecLatSens
+#define SET_FORCE_END(info)  (info).fec_flags_ |= kFecForceEnd
+
+#define CLEAR_PURE_ARQ(info)  (info).fec_flags_ &= ~kFecPureArq
 
 
 /// The SentPktInfo's static member to the packet pool.
@@ -205,19 +216,19 @@ SentPktManager::SentPktManager(Connection& conn, Stream& stream,
       last_lo_conn_seq_(0),
       stats_pkts_(),
       stats_bytes_in_flight_(0),
-      stats_per_(0.0),
       stats_fec_src_dur_sec_(1.0),
       stats_pkt_ist_(-1.0),
+      fec_per_(0.0),
+      fec_per_idx_(0),
+      fec_epsilon_idx_(0),
       fec_target_rounds_(0),
-      fec_blk_idx_(0),
-      fec_grp_(0),
+      fec_grp_idx_(0),
+      fec_grp_id_(0),
       fec_total_pkts_(0),
-      fec_dss_init_flag_(false),
       fec_dss_next_num_src_(kMaxK),
-      fec_dss_pkts_before_ack_(0),
       fec_dss_ack_after_grp_cnt_(0),
-      fec_midgame_table_(NULL),
-      fec_endgame_table_(NULL),
+      fec_midgame_tables_(),
+      fec_endgame_tables_(),
       fec_grp_info_(NULL),
       fec_eor_cnt_(0),
       fec_eor_idx_(0),
@@ -230,6 +241,12 @@ SentPktManager::SentPktManager(Connection& conn, Stream& stream,
       cc_una_pkt_(),
       sent_pkts_(NULL)
 {
+  // Set all of the FEC lookup table pointers to NULL.
+  for (size_t i = 0; i < kNumLookupTables; ++i)
+  {
+    fec_midgame_tables_[i] = NULL;
+    fec_endgame_tables_[i] = NULL;
+  }
 }
 
 //============================================================================
@@ -243,17 +260,27 @@ SentPktManager::~SentPktManager()
        stats_pkts_.fec_src_sent_, stats_pkts_.fec_src_rx_sent_,
        stats_pkts_.fec_enc_sent_, stats_pkts_.fec_enc_rx_sent_);
 
-  // Delete the arrays of information.
-  if (fec_midgame_table_ != NULL)
-  {
-    delete [] fec_midgame_table_;
-    fec_midgame_table_ = NULL;
-  }
+  LogI(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+       " sent fec grp counts: pure_fec %zu coded_arq %zu pure_arq %zu ( "
+       "pure_arq_1 %zu pure_arq_2+ %zu )\n", conn_id_, stream_id_,
+       stats_pkts_.fec_grp_pure_fec_, stats_pkts_.fec_grp_coded_arq_,
+       (stats_pkts_.fec_grp_pure_arq_1_ + stats_pkts_.fec_grp_pure_arq_2p_),
+       stats_pkts_.fec_grp_pure_arq_1_, stats_pkts_.fec_grp_pure_arq_2p_);
 
-  if (fec_endgame_table_ != NULL)
+  // Delete the arrays of information.
+  for (size_t i = 0; i < kNumLookupTables; ++i)
   {
-    delete [] fec_endgame_table_;
-    fec_endgame_table_ = NULL;
+    if (fec_midgame_tables_[i] != NULL)
+    {
+      delete [] fec_midgame_tables_[i];
+      fec_midgame_tables_[i] = NULL;
+    }
+
+    if (fec_endgame_tables_[i] != NULL)
+    {
+      delete [] fec_endgame_tables_[i];
+      fec_endgame_tables_[i] = NULL;
+    }
   }
 
   if (fec_grp_info_ != NULL)
@@ -293,29 +320,29 @@ bool SentPktManager::Initialize(const Reliability& rel,
   // Initialize the FEC state.
   if (rel_.mode == SEMI_RELIABLE_ARQ_FEC)
   {
-    // \todo This currently only handles the FEC target packet delivery limit
-    // specified as some number of rounds.  Add support for time values.
     if (rel_.fec_del_time_flag)
     {
-      LogE(kClassName, __func__, "Conn %" PRIEndptId ": Error, no support "
-           "for FEC target packet delivery time.\n", conn_id_);
-      return false;
+      // Set the target number of rounds to one for now.  It will be set to
+      // the correct value whenever UpdateFecTableParams() is called.
+      fec_target_rounds_ = 1;
     }
-
-    // Note that the target number of rounds is limited due to the size of the
-    // FEC lookup table parameter arrays.  Avoid exceeding the limit.
-    if (rel_.fec_target_pkt_del_rounds > kNumRounds)
+    else
     {
-      LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": Error, FEC target number of rounds %" PRIRexmitRounds
-           " exceeds limit of %zu.\n", conn_id_, stream_id_,
-           rel_.fec_target_pkt_del_rounds, kNumRounds);
-      return false;
-    }
+      // Note that the target number of rounds is limited due to the size of
+      // the FEC lookup table parameter arrays.  Avoid exceeding the limits.
+      if ((rel_.fec_target_pkt_del_rounds < 1) ||
+          (rel_.fec_target_pkt_del_rounds > kNumRounds))
+      {
+        LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+             ": Error, FEC target number of rounds %" PRIRexmitRounds
+             " exceeds limits of 1 to %zu.\n", conn_id_, stream_id_,
+             rel_.fec_target_pkt_del_rounds, kNumRounds);
+        return false;
+      }
 
-    // Store the target number of rounds and validate it.
-    fec_target_rounds_ = ((rel_.fec_target_pkt_del_rounds > 0) ?
-                          rel_.fec_target_pkt_del_rounds : 1);
+      // Store the target number of rounds.  This value will not change.
+      fec_target_rounds_ = rel_.fec_target_pkt_del_rounds;
+    }
 
     // Initialize the FEC encoder.
     VdmFec::Initialize();
@@ -327,20 +354,12 @@ bool SentPktManager::Initialize(const Reliability& rel,
   // Allocate the FEC lookup tables and arrays.
   if (rel_.mode == SEMI_RELIABLE_ARQ_FEC)
   {
-    fec_midgame_table_ = new (std::nothrow) int32_t[kFecTableSize];
-    fec_endgame_table_ = new (std::nothrow) int32_t[kFecTableSize];
-
-    if ((fec_midgame_table_ == NULL) || (fec_endgame_table_ == NULL))
+    if (!CreateFecTables())
     {
       LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": Error allocating FEC lookup tables.\n", conn_id_, stream_id_);
+           ": Error creating FEC lookup tables.\n", conn_id_, stream_id_);
       return false;
     }
-
-    memset(fec_midgame_table_, 0, (kFecTableSize * sizeof(int32_t)));
-    memset(fec_endgame_table_, 0, (kFecTableSize * sizeof(int32_t)));
-
-    UpdateFecTables(true);
 
     fec_grp_info_ = new (std::nothrow) FecGroupInfo[kFecGroupSize];
 
@@ -404,8 +423,8 @@ bool SentPktManager::Initialize(const Reliability& rel,
        "tgt_prob %f snd_wnd %" PRIWindowSize " snd_fec %" PRIPktSeqNumber
        " snd_una %" PRIPktSeqNumber " snd_nxt %" PRIPktSeqNumber
        " rcv_ack_nxt_exp %" PRIPktSeqNumber " rcv_ack_lrg_obs %"
-       PRIPktSeqNumber "\n", conn_id_, stream_id_,
-       rel_.mode, rel_.rexmit_limit, static_cast<int>(rel_.fec_del_time_flag),
+       PRIPktSeqNumber "\n", conn_id_, stream_id_, rel_.mode,
+       rel_.rexmit_limit, static_cast<int>(rel_.fec_del_time_flag),
        fec_target_rounds_, rel_.fec_target_pkt_del_time_sec,
        rel_.fec_target_pkt_recv_prob, kFlowCtrlWindowPkts, snd_fec_, snd_una_,
        snd_nxt_, rcv_ack_nxt_exp_, rcv_ack_lrg_obs_);
@@ -465,23 +484,23 @@ bool SentPktManager::PrepareNextPkt(Packet* pkt, CcId cc_id, bool fin,
 
   if (hdr.fec_flag)
   {
-    new_grp = (fec_blk_idx_ == 0);
+    new_grp = (fec_grp_idx_ == 0);
 
     hdr.fec_pkt_type       = FEC_SRC_PKT;
-    hdr.fec_block_index    = fec_blk_idx_;
+    hdr.fec_group_index    = fec_grp_idx_;
     hdr.fec_num_src        = 0;
     hdr.fec_round          = 1;
-    hdr.fec_group_id       = fec_grp_;
+    hdr.fec_group_id       = fec_grp_id_;
     hdr.encoded_pkt_length = 0;
 
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
          ": Next seq %" PRIPktSeqNumber " FEC SRC grp %" PRIFecGroupId
-         " idx %" PRIFecBlock "\n", conn_id_, stream_id_, hdr.sequence_number,
-         hdr.fec_group_id, hdr.fec_block_index);
+         " idx %" PRIFecSize "\n", conn_id_, stream_id_, hdr.sequence_number,
+         hdr.fec_group_id, hdr.fec_group_index);
 #endif
 
-    ++fec_blk_idx_;
+    ++fec_grp_idx_;
   }
 #ifdef SLIQ_DEBUG
   else
@@ -625,7 +644,7 @@ void SentPktManager::AddSentPkt(
     SET_FEC(pkt_info);
     pkt_info.fec_grp_id_      = hdr.fec_group_id;
     pkt_info.fec_enc_pkt_len_ = hdr.encoded_pkt_length;
-    pkt_info.fec_blk_idx_     = hdr.fec_block_index;
+    pkt_info.fec_grp_idx_     = hdr.fec_group_index;
     pkt_info.fec_num_src_     = hdr.fec_num_src;
     pkt_info.fec_round_       = hdr.fec_round;
     pkt_info.fec_pkt_type_    = static_cast<uint8_t>(hdr.fec_pkt_type);
@@ -653,40 +672,71 @@ void SentPktManager::AddSentPkt(
   // Update the FEC state as needed.
   if (rel_.mode == SEMI_RELIABLE_ARQ_FEC)
   {
-    FecGroupInfo&  grp_info = fec_grp_info_[(fec_grp_ % kFecGroupSize)];
+    FecGroupInfo&  grp_info = fec_grp_info_[(fec_grp_id_ % kFecGroupSize)];
 
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
          ": Sent FEC src pkt: seq %" PRIPktSeqNumber " rx %" PRIRetransCount
-         " grp %" PRIFecGroupId " idx %" PRIFecBlock " rnd %" PRIFecRound
+         " grp %" PRIFecGroupId " idx %" PRIFecSize " rnd %" PRIFecRound
          ".\n", conn_id_, stream_id_, seq_num, hdr.retransmission_count,
-         hdr.fec_group_id, hdr.fec_block_index, hdr.fec_round);
+         hdr.fec_group_id, hdr.fec_group_index, hdr.fec_round);
 #endif
 
-    if (hdr.fec_block_index == 0)
+    if (hdr.fec_group_index == 0)
     {
       // Initialize the new FEC group information.
-      grp_info.fec_grp_id_          = fec_grp_;
-      grp_info.fec_num_src_         = fec_dss_next_num_src_;
+      grp_info.fec_grp_id_          = fec_grp_id_;
+      grp_info.fec_num_src_         = 1;
       grp_info.fec_num_enc_         = 0;
       grp_info.fec_src_ack_cnt_     = 0;
       grp_info.fec_enc_ack_cnt_     = 0;
       grp_info.fec_round_           = 0;
+      grp_info.fec_max_rounds_      = 0;
       grp_info.fec_gen_enc_round_   = 0;
       grp_info.fec_src_to_send_icr_ = 0;
       grp_info.fec_enc_to_send_icr_ = 0;
       grp_info.fec_src_sent_icr_    = 0;
       grp_info.fec_enc_sent_icr_    = 0;
       grp_info.fec_rexmit_limit_    = rel_.rexmit_limit;
-      grp_info.latency_sensitive_   = (lat_sens ? 1 : 0);
-      grp_info.force_end_           = 0;
+      grp_info.fec_flags_           = 0;
       grp_info.start_src_seq_num_   = seq_num;
       grp_info.end_src_seq_num_     = seq_num;
       grp_info.start_enc_seq_num_   = seq_num;
       grp_info.end_enc_seq_num_     = seq_num;
 
-      // Use the PER to update the FEC lookup tables.
-      UpdateFecTables();
+      if (lat_sens)
+      {
+        SET_LAT_SENS(grp_info);
+      }
+
+      // Update the FEC lookup table parameters for the new FEC group.  This
+      // includes the PER, the target number of rounds (N), and the number of
+      // source packets per group (k).  It also determines if pure ARQ can be
+      // used or not.
+      bool  fec_pure_arq_flag = UpdateFecTableParams();
+
+      // Set the number of FEC source packets in the group, the maximum number
+      // of rounds to be used, and if pure ARQ should be used for the group.
+      // This must be done after the UpdateFecTableParams() call, but before
+      // the PrepareNextFecRound() call.
+      grp_info.fec_num_src_    = (fec_pure_arq_flag ?
+                                  1 : fec_dss_next_num_src_);
+      grp_info.fec_max_rounds_ = fec_target_rounds_;
+
+      if (fec_pure_arq_flag)
+      {
+        SET_PURE_ARQ(grp_info);
+      }
+
+      // Make sure that the retransmission limit for the FEC group allows for
+      // the scheduled number of rounds.  Note that N rounds includes (N-1)
+      // retransmissions.
+      if ((grp_info.fec_max_rounds_ > 1) &&
+          ((grp_info.fec_rexmit_limit_ + 1) < grp_info.fec_max_rounds_))
+      {
+        grp_info.fec_rexmit_limit_ = (grp_info.fec_max_rounds_ - 1);
+        pkt_info.rexmit_limit_     = grp_info.fec_rexmit_limit_;
+      }
 
       // Prepare what packets should be sent in the first round using the FEC
       // lookup tables.  This will set the current round to 1.
@@ -698,7 +748,7 @@ void SentPktManager::AddSentPkt(
       {
         LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Error, FEC lookup table reports to send only %"
-             PRIFecBlock " FEC source packets in round 1.\n", conn_id_,
+             PRIFecSize " FEC source packets in round 1.\n", conn_id_,
              stream_id_, grp_info.fec_src_to_send_icr_);
         grp_info.fec_src_to_send_icr_ = grp_info.fec_num_src_;
       }
@@ -710,12 +760,12 @@ void SentPktManager::AddSentPkt(
     {
       // The FEC group information entry should still be for the current FEC
       // group being sent.
-      if (grp_info.fec_grp_id_ != fec_grp_)
+      if (grp_info.fec_grp_id_ != fec_grp_id_)
       {
         LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Error, FEC group info for current grp %" PRIFecGroupId " not "
              "found, entry set to %" PRIFecGroupId ".\n", conn_id_,
-             stream_id_, fec_grp_, grp_info.fec_grp_id_);
+             stream_id_, fec_grp_id_, grp_info.fec_grp_id_);
       }
 
       // Set the FEC source packet's retransmission limit to that for the FEC
@@ -728,9 +778,9 @@ void SentPktManager::AddSentPkt(
       // Update the latency-sensitive data setting for the FEC group.  If at
       // least one source packet in the group is latency-sensitive, then all
       // source packets in the group must be treated as latency-sensitive.
-      if ((grp_info.latency_sensitive_ == 0) && lat_sens)
+      if (lat_sens)
       {
-        grp_info.latency_sensitive_ = 1;
+        SET_LAT_SENS(grp_info);
       }
     }
 
@@ -739,7 +789,7 @@ void SentPktManager::AddSentPkt(
 
     // Check if this is the last FEC source packet to be sent in the FEC
     // group.
-    if (hdr.fec_block_index == (grp_info.fec_num_src_ - 1))
+    if (hdr.fec_group_index == (grp_info.fec_num_src_ - 1))
     {
       grp_end = true;
 
@@ -750,7 +800,7 @@ void SentPktManager::AddSentPkt(
       {
         if (!GenerateFecEncodedPkts(
               grp_info.start_src_seq_num_, grp_info.end_src_seq_num_,
-              grp_info.fec_grp_id_, kMaxFecBlockLengthPkts,
+              grp_info.fec_grp_id_, kMaxFecGroupLengthPkts,
               grp_info.fec_num_src_, 0, grp_info.fec_num_enc_, fec_enc_orig_,
               false))
         {
@@ -761,7 +811,7 @@ void SentPktManager::AddSentPkt(
 
 #ifdef SLIQ_DEBUG
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-             ": Generated %" PRIFecBlock " FEC encoded packets for grp %"
+             ": Generated %" PRIFecSize " FEC encoded packets for grp %"
              PRIFecGroupId " in round %" PRIFecRound ".\n", conn_id_,
              stream_id_, grp_info.fec_num_enc_, grp_info.fec_grp_id_,
              grp_info.fec_round_);
@@ -778,8 +828,8 @@ void SentPktManager::AddSentPkt(
         RecordEndOfFecRound(xmit_time, grp_info, hdr.timestamp);
       }
 
-      // Move to the next FEC block.
-      StartNextFecBlock();
+      // Move to the next FEC group.
+      StartNextFecGroup();
     }
   }
 
@@ -821,7 +871,7 @@ bool SentPktManager::GetBlockedPkt(DataHeader& hdr, Packet*& pkt)
       if (hdr.fec_flag)
       {
         hdr.fec_pkt_type    = static_cast<FecPktType>(pkt_info.fec_pkt_type_);
-        hdr.fec_block_index = pkt_info.fec_blk_idx_;
+        hdr.fec_group_index = pkt_info.fec_grp_idx_;
         hdr.fec_num_src     = pkt_info.fec_num_src_;
         hdr.fec_round       = pkt_info.fec_round_;
         hdr.fec_group_id    = pkt_info.fec_grp_id_;
@@ -933,17 +983,25 @@ bool SentPktManager::GetRexmitPktSeqNum(const Time& now, bool lowest,
 bool SentPktManager::GetRexmitPktLen(PktSeqNumber seq_num, bool addl,
                                      size_t& data_len, CcId& cc_id)
 {
+  bool        allow      = false;
+  bool        is_fec_enc = false;
+  FecGroupId  grp_id     = 0;
+
   if (addl)
   {
     // This is an additional FEC encoded packet (an unsent FEC encoded packet
-    // generated in round 2+).
+    // generated in round 2+).  Even though it has not been sent yet, it is
+    // treated as a retransmission because it was generated after the first
+    // round was over, which is when retransmissions normally occur.  Thus,
+    // this additional FEC encoded packet is akin to a repair packet, and is
+    // sent using the same methods as for retransmission packets.
 
     // For additional FEC encoded packets, congestion control is handled as
     // follows:
     //
     // 1. The stream calls this method and gets an invalid cc_id returned.
     // 2. The stream then checks all of the CC algorithms for permission to
-    //    send the packet using the CC algorithm CanSent() methods.
+    //    send the packet using the CC algorithm CanSend() methods.
     // 3. If no CC algorithm grants permission, then the packet is not sent
     //    and this processing stops.
     // 4. If a CC algorithm grants permission, then the packet has a cc_id.
@@ -960,8 +1018,8 @@ bool SentPktManager::GetRexmitPktLen(PktSeqNumber seq_num, bool addl,
     // packet queue.
     if (fec_enc_addl_.GetCount() > 0)
     {
-      // Check the sequence number of the head additional FEC encoded packet
-      // in the queue.
+      // Verify that this packet is at the head of the additional FEC encoded
+      // packet queue and so should be next to go.
       SentPktInfo&  fe_pkt_info = fec_enc_addl_.GetHead();
 
       if (seq_num == fe_pkt_info.seq_num_)
@@ -969,7 +1027,10 @@ bool SentPktManager::GetRexmitPktLen(PktSeqNumber seq_num, bool addl,
         data_len = fe_pkt_info.pkt_len_;
         cc_id    = SliqApp::kMaxCcAlgPerConn; // Invalid value.
 
-        return true;
+        // The retransmission packet was found and is an FEC encoded packet.
+        allow      = true;
+        is_fec_enc = true;
+        grp_id     = fe_pkt_info.fec_grp_id_;
       }
     }
   }
@@ -986,12 +1047,44 @@ bool SentPktManager::GetRexmitPktLen(PktSeqNumber seq_num, bool addl,
         data_len = pkt_info.pkt_len_;
         cc_id    = pkt_info.cc_id_;
 
-        return true;
+        // The retransmission packet was found.
+        allow = true;
+
+        // Determine if it is an FEC encoded packet or not.
+        if (IS_FEC(pkt_info) && (pkt_info.fec_pkt_type_ == FEC_ENC_PKT))
+        {
+          is_fec_enc = true;
+          grp_id     = pkt_info.fec_grp_id_;
+        }
       }
     }
   }
 
-  return false;
+  // If allow is true and this is an FEC encoded data packet, then make sure
+  // that the FEC group still needs the packet to be resent.
+  if (allow && is_fec_enc)
+  {
+    FecGroupInfo&  grp_info = fec_grp_info_[(grp_id % kFecGroupSize)];
+
+    if (grp_info.fec_grp_id_ == grp_id)
+    {
+      // Check if all of the FEC source data packets for the group have been
+      // ACKed.  If so, then do not bother resending the FEC encoded data
+      // packet.
+      if (grp_info.fec_src_ack_cnt_ >= grp_info.fec_num_src_)
+      {
+        allow = false;
+      }
+    }
+    else
+    {
+      // There is no FEC group information.  Do not bother resending the FEC
+      // encoded data packet.
+      allow = false;
+    }
+  }
+
+  return allow;
 }
 
 //============================================================================
@@ -1044,8 +1137,8 @@ bool SentPktManager::GetRexmitPkt(const Time& now, PktSeqNumber seq_num,
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
          ": Next seq %" PRIPktSeqNumber " addl FEC ENC grp %" PRIFecGroupId
-         " idx %" PRIFecBlock "\n", conn_id_, stream_id_, hdr.sequence_number,
-         hdr.fec_group_id, hdr.fec_block_index);
+         " idx %" PRIFecSize "\n", conn_id_, stream_id_, hdr.sequence_number,
+         hdr.fec_group_id, hdr.fec_group_index);
 #endif
 
     return true;
@@ -1092,7 +1185,7 @@ bool SentPktManager::GetRexmitPkt(const Time& now, PktSeqNumber seq_num,
   if (hdr.fec_flag)
   {
     hdr.fec_pkt_type    = static_cast<FecPktType>(pkt_info.fec_pkt_type_);
-    hdr.fec_block_index = pkt_info.fec_blk_idx_;
+    hdr.fec_group_index = pkt_info.fec_grp_idx_;
     hdr.fec_num_src     = pkt_info.fec_num_src_;
     hdr.fec_round       = (rto_outage ? 0 :
                            GetRexmitFecRound(pkt_info.fec_grp_id_));
@@ -1157,21 +1250,21 @@ void SentPktManager::SentRexmitPkt(
       {
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Resent FEC src pkt: rto %d seq %" PRIPktSeqNumber " rx %"
-             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecBlock
+             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecSize
              " rnd %" PRIFecRound " num_ttg %" PRITtgCount " ttg %f.\n",
              conn_id_, stream_id_, (rto_outage ? 1 : 0), seq_num,
-             hdr.retransmission_count, hdr.fec_group_id, hdr.fec_block_index,
+             hdr.retransmission_count, hdr.fec_group_id, hdr.fec_group_index,
              hdr.fec_round, hdr.num_ttg, hdr.ttg[0]);
       }
       else
       {
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Resent FEC enc pkt: rto %d seq %" PRIPktSeqNumber " rx %"
-             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecBlock
+             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecSize
              " rnd %" PRIFecRound " num_ttg %" PRITtgCount " ttg %f %f %f %f "
              "%f %f %f %f %f %f.\n", conn_id_, stream_id_,
              (rto_outage ? 1 : 0), seq_num, hdr.retransmission_count,
-             hdr.fec_group_id, hdr.fec_block_index, hdr.fec_round,
+             hdr.fec_group_id, hdr.fec_group_index, hdr.fec_round,
              hdr.num_ttg, hdr.ttg[0], hdr.ttg[1], hdr.ttg[2], hdr.ttg[3],
              hdr.ttg[4], hdr.ttg[5], hdr.ttg[6], hdr.ttg[7], hdr.ttg[8],
              hdr.ttg[9]);
@@ -1197,6 +1290,12 @@ void SentPktManager::SentRexmitPkt(
     // Update the sent packet count.
     pkt_info.prev_sent_pkt_cnt_ = pkt_info.sent_pkt_cnt_;
     pkt_info.sent_pkt_cnt_      = sent_pkt_cnt;
+
+#ifdef SLIQ_DEBUG
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": Update rexmit pkt seq %" PRIPktSeqNumber " cnt %" PRIPktCount
+         ".\n", conn_id_, stream_id_, seq_num, sent_pkt_cnt);
+#endif
 
     // Update the last transmission time.
     pkt_info.last_xmit_time_ = now.ToTval();
@@ -1286,7 +1385,7 @@ void SentPktManager::SentRexmitPkt(
         }
 
         // Update the packet sent count for the FEC group's current round.
-        if (grp_info.fec_round_ <= fec_target_rounds_)
+        if (grp_info.fec_round_ <= grp_info.fec_max_rounds_)
         {
           if (hdr.fec_pkt_type == FEC_SRC_PKT)
           {
@@ -1300,8 +1399,8 @@ void SentPktManager::SentRexmitPkt(
 #ifdef SLIQ_DEBUG
           LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
                PRIStreamId ": Updated grp %" PRIFecGroupId " counts: "
-               " src_to_send %" PRIFecBlock " enc_to_send %" PRIFecBlock
-               " src_sent %" PRIFecBlock " enc_sent %" PRIFecBlock ".\n",
+               " src_to_send %" PRIFecSize " enc_to_send %" PRIFecSize
+               " src_sent %" PRIFecSize " enc_sent %" PRIFecSize ".\n",
                conn_id_, stream_id_, grp_info.fec_grp_id_,
                grp_info.fec_src_to_send_icr_, grp_info.fec_enc_to_send_icr_,
                grp_info.fec_src_sent_icr_, grp_info.fec_enc_sent_icr_);
@@ -1391,8 +1490,8 @@ bool SentPktManager::GetNextOrigFecEncPkt(const Time& now, CcId cc_id,
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
        ": Next seq %" PRIPktSeqNumber " orig FEC ENC grp %" PRIFecGroupId
-       " idx %" PRIFecBlock "\n", conn_id_, stream_id_, hdr.sequence_number,
-       hdr.fec_group_id, hdr.fec_block_index);
+       " idx %" PRIFecSize "\n", conn_id_, stream_id_, hdr.sequence_number,
+       hdr.fec_group_id, hdr.fec_group_index);
 #endif
 
   return true;
@@ -1413,15 +1512,15 @@ void SentPktManager::ForceFecGroupToEnd()
 {
   // First, check if a new FEC group has been started.  This is done by
   // checking if at least one FEC source data packet has been sent in the
-  // current FEC group, which increments the next FEC block index to a
+  // current FEC group, which increments the next FEC group index to a
   // non-zero value.  If not, then return.
-  if (fec_blk_idx_ == 0)
+  if (fec_grp_idx_ == 0)
   {
     return;
   }
 
   // Find the current FEC group info.
-  FecGroupInfo&  grp_info = fec_grp_info_[(fec_grp_ % kFecGroupSize)];
+  FecGroupInfo&  grp_info = fec_grp_info_[(fec_grp_id_ % kFecGroupSize)];
 
   // Make sure that the current FEC group is still in round 1.
   if (grp_info.fec_round_ != 1)
@@ -1430,43 +1529,56 @@ void SentPktManager::ForceFecGroupToEnd()
   }
 
   // Mark the group as being forced to end.
-  grp_info.force_end_ = 1;
+  SET_FORCE_END(grp_info);
 
   // Update the number of source and encoded packets in the current group.
   // The number of source packets will be however many have already been sent.
   grp_info.fec_num_src_ = grp_info.fec_src_sent_icr_;
 
-  // Use the correct FEC lookup table to determine the total number of packets
-  // to be sent.
+  // Determine the total number of packets to be sent.
   int32_t  num_src       = grp_info.fec_num_src_;
   int32_t  total_to_send = 0;
-  size_t   idx           = TABLE_OFFSET(num_src, 0, 0);
 
-  if (idx >= kFecTableSize)
+  if (IS_PURE_ARQ(grp_info))
   {
-    LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Error, invalid FEC lookup table index %zu ([%" PRId32
-         "][0][0]).\n", conn_id_, stream_id_, idx, num_src);
-  }
-
-  if (grp_info.fec_round_ < fec_target_rounds_)
-  {
-    // Not in the last round yet.  Use the midgame table.
-    total_to_send = fec_midgame_table_[idx];
+    // Pure ARQ is in use.  Do not send any FEC encoded packets.
+    total_to_send = num_src;
   }
   else
   {
-    // In the last round now.  Use the endgame table.
-    total_to_send = fec_endgame_table_[idx];
-  }
+    // Use the correct FEC lookup table to determine the total number of
+    // packets to be sent.
+    size_t  idx = TableOffset(fec_per_idx_, grp_info.fec_num_src_, 0, 0);
+
+    if ((grp_info.fec_max_rounds_ >= kNumLookupTables) ||
+        (fec_midgame_tables_[grp_info.fec_max_rounds_] == NULL) ||
+        (fec_endgame_tables_[grp_info.fec_max_rounds_] == NULL))
+    {
+      LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+           ": Error, missing FEC lookup tables for n %" PRIFecRound ".\n",
+           conn_id_, stream_id_, grp_info.fec_max_rounds_);
+    }
+
+    if (grp_info.fec_round_ < grp_info.fec_max_rounds_)
+    {
+      // Not in the last round yet.  Use the midgame table.
+      total_to_send = fec_midgame_tables_[grp_info.fec_max_rounds_][idx];
+    }
+    else
+    {
+      // In the last round now.  Use the endgame table.
+      total_to_send = fec_endgame_tables_[grp_info.fec_max_rounds_][idx];
+    }
 
 #ifdef SLIQ_DEBUG
-  LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-       ": Force end of FEC grp %" PRIFecGroupId " %sgame[%" PRId32 "][0][0] "
-       "= %" PRId32 "\n", conn_id_, stream_id_, grp_info.fec_grp_id_,
-       ((grp_info.fec_round_ < fec_target_rounds_) ? "mid" : "end"), num_src,
-       total_to_send);
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": Force end of FEC grp %" PRIFecGroupId " %sgame[%" PRIFecRound
+         "][%zu][%" PRId32 "][0][0] = %" PRId32 "\n", conn_id_, stream_id_,
+         grp_info.fec_grp_id_,
+         ((grp_info.fec_round_ < grp_info.fec_max_rounds_) ? "mid" : "end"),
+         grp_info.fec_round_, fec_per_idx_, num_src, total_to_send);
 #endif
+  }
 
   int32_t  num_enc = (total_to_send - num_src);
 
@@ -1489,7 +1601,7 @@ void SentPktManager::ForceFecGroupToEnd()
   {
     if (!GenerateFecEncodedPkts(
           grp_info.start_src_seq_num_, grp_info.end_src_seq_num_,
-          grp_info.fec_grp_id_, kMaxFecBlockLengthPkts,
+          grp_info.fec_grp_id_, kMaxFecGroupLengthPkts,
           grp_info.fec_num_src_, 0, grp_info.fec_num_enc_, fec_enc_orig_,
           false))
     {
@@ -1500,7 +1612,7 @@ void SentPktManager::ForceFecGroupToEnd()
 
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Generated %" PRIFecBlock " FEC encoded packets for grp %"
+         ": Generated %" PRIFecSize " FEC encoded packets for grp %"
          PRIFecGroupId ".\n", conn_id_, stream_id_, grp_info.fec_num_enc_,
          grp_info.fec_grp_id_);
 #endif
@@ -1511,16 +1623,16 @@ void SentPktManager::ForceFecGroupToEnd()
   else
   {
     // There are no FEC encoded packets for the FEC group, so all of the
-    // packets for the FEC group have been sent.  Watch the
-    // returned ACK packet timestamps for the end of the round.
+    // packets for the FEC group have been sent.  Watch the returned ACK
+    // packet timestamps for the end of the round.
     Time          now = Time::Now();
     PktTimestamp  ts  = conn_.GetCurrentLocalTimestamp();
 
     RecordEndOfFecRound(now, grp_info, ts);
   }
 
-  // Move to the next FEC block.
-  StartNextFecBlock();
+  // Move to the next FEC group.
+  StartNextFecGroup();
 }
 
 //============================================================================
@@ -1711,7 +1823,7 @@ bool SentPktManager::ProcessAck(const AckHeader& ack_hdr,
     // Update the RTT manager.
     Time  rtt = Time::FromUsec(rtt_usec);
 
-    rtt_mgr_.UpdateRtt(conn_id_, rtt);
+    rtt_mgr_.UpdateRtt(now, conn_id_, rtt);
 
     // Store the RTT for the packet, and notify the congestion control
     // algorithm of the RTT update.
@@ -1840,7 +1952,7 @@ bool SentPktManager::ProcessAck(const AckHeader& ack_hdr,
 
   // Move snd_una_ up to the next expected sequence number in the received ACK
   // packet.  These packets have either been ACKed or are FEC packets that the
-  // receiver has given up on (FEC mode does not use move forward packets).
+  // receiver has given up on (based on move forward packets).
   PktSeqNumber  old_snd_una = snd_una_;
   bool          using_fec   = (rel_.mode == SEMI_RELIABLE_ARQ_FEC);
 
@@ -2054,10 +2166,10 @@ void SentPktManager::LeaveOutage()
     // Get the current time.
     Time  now = Time::Now();
 
-    // Reset the FEC block.
+    // Reset the FEC group.
     if (rel_.mode == SEMI_RELIABLE_ARQ_FEC)
     {
-      StartNextFecBlock();
+      StartNextFecGroup();
       UpdateSndFec(true);
       EmptyFecEncodedPktQueues();
       fec_eor_cnt_ = 0;
@@ -2127,7 +2239,7 @@ double SentPktManager::GetFecSrcPktsDurSec()
     // When computing the duration limit using the current packet inter-send
     // time estimate, use (pkts) instead of (pkts - 1) and then add 20% in
     // order to avoid ending FEC groups too soon.
-    FecBlock pkts = ((fec_total_pkts_ > 1) ? fec_total_pkts_ : 2);
+    FecSize  pkts = ((fec_total_pkts_ > 1) ? fec_total_pkts_ : 2);
     double   lim  = (1.2 * (stats_pkt_ist_ * static_cast<double>(pkts)));
 
     if (rv > lim)
@@ -2400,11 +2512,46 @@ bool SentPktManager::AllowRexmitBasic(const SentPktInfo& pkt_info,
       return false;
 
     case SEMI_RELIABLE_ARQ:
-    case SEMI_RELIABLE_ARQ_FEC:
       // Retransmit if allowed and not stale.
       return ((pkt_info.rexmit_limit_ > 0) &&
               ((pkt_info.rexmit_cnt_ < pkt_info.rexmit_limit_) ||
                (now < (Time(pkt_info.last_xmit_time_) + rexmit_time))));
+
+    case SEMI_RELIABLE_ARQ_FEC:
+    {
+      // Retransmit if allowed and not stale.
+      bool allow = ((pkt_info.rexmit_limit_ > 0) &&
+                    ((pkt_info.rexmit_cnt_ < pkt_info.rexmit_limit_) ||
+                     (now < (Time(pkt_info.last_xmit_time_) + rexmit_time))));
+
+      // If allow is true and this is an FEC encoded data packet, then make
+      // sure that the FEC group still needs the packet to be resent.
+      if (allow && IS_FEC(pkt_info) &&
+          (pkt_info.fec_pkt_type_ == FEC_ENC_PKT))
+      {
+        FecGroupInfo&  grp_info = fec_grp_info_[(pkt_info.fec_grp_id_ %
+                                                 kFecGroupSize)];
+
+        if (grp_info.fec_grp_id_ == pkt_info.fec_grp_id_)
+        {
+          // Check if all of the FEC source data packets for the group have
+          // been ACKed.  If so, then do not bother resending the FEC encoded
+          // data packet.
+          if (grp_info.fec_src_ack_cnt_ >= grp_info.fec_num_src_)
+          {
+            allow = false;
+          }
+        }
+        else
+        {
+          // There is no FEC group information.  Do not bother resending the
+          // FEC encoded data packet.
+          allow = false;
+        }
+      }
+
+      return allow;
+    }
 
     case RELIABLE_ARQ:
     default:
@@ -2451,7 +2598,7 @@ bool SentPktManager::AllowRexmit(SentPktInfo& pkt_info)
           // Only allow the retransmission here if the FEC group is out of
           // rounds, all of the FEC source packets have not been ACKed yet,
           // and this is an FEC source packet.
-          allow = ((grp_info.fec_round_ > fec_target_rounds_) &&
+          allow = ((grp_info.fec_round_ > grp_info.fec_max_rounds_) &&
                    (grp_info.fec_src_ack_cnt_ < grp_info.fec_num_src_) &&
                    (pkt_info.fec_pkt_type_ == FEC_SRC_PKT));
         }
@@ -2507,7 +2654,7 @@ bool SentPktManager::GetFecEncPkt(const Time& now, CcId cc_id,
   hdr.move_fwd_seq_num     = 0;
 
   hdr.fec_pkt_type       = FEC_ENC_PKT;
-  hdr.fec_block_index    = fe_pkt_info.fec_blk_idx_;
+  hdr.fec_group_index    = fe_pkt_info.fec_grp_idx_;
   hdr.fec_num_src        = fe_pkt_info.fec_num_src_;
   hdr.fec_round          = GetRexmitFecRound(fe_pkt_info.fec_grp_id_);
   hdr.fec_group_id       = fe_pkt_info.fec_grp_id_;
@@ -2638,7 +2785,7 @@ void SentPktManager::MoveFecEncPkt(
     ++grp_info.fec_enc_sent_icr_;
 
     // Update the FEC encoded packet sequence numbers in the FEC group.
-    if (pkt_info.fec_blk_idx_ == grp_info.fec_num_src_)
+    if (pkt_info.fec_grp_idx_ == grp_info.fec_num_src_)
     {
       grp_info.start_enc_seq_num_ = seq_num;
     }
@@ -2663,10 +2810,10 @@ void SentPktManager::MoveFecEncPkt(
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
        ": Sent FEC enc pkt: seq %" PRIPktSeqNumber " rx %" PRIRetransCount
-       " grp %" PRIFecGroupId " idx %" PRIFecBlock " rnd %" PRIFecRound
+       " grp %" PRIFecGroupId " idx %" PRIFecSize " rnd %" PRIFecRound
        " num_ttg %" PRITtgCount " ttg %f %f %f %f %f %f %f %f %f %f.\n",
        conn_id_, stream_id_, seq_num, hdr.retransmission_count, fec_grp,
-       hdr.fec_block_index, hdr.fec_round, hdr.num_ttg, hdr.ttg[0],
+       hdr.fec_group_index, hdr.fec_round, hdr.num_ttg, hdr.ttg[0],
        hdr.ttg[1], hdr.ttg[2], hdr.ttg[3], hdr.ttg[4], hdr.ttg[5], hdr.ttg[6],
        hdr.ttg[7], hdr.ttg[8], hdr.ttg[9]);
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
@@ -2697,7 +2844,7 @@ void SentPktManager::CleanUpOrigFecEncQueue()
       {
         // Check if all of the FEC source data packets in the FEC group have
         // been delivered.
-        if ((grp_info.fec_round_ <= fec_target_rounds_) &&
+        if ((grp_info.fec_round_ <= grp_info.fec_max_rounds_) &&
             (grp_info.fec_src_ack_cnt_ < grp_info.fec_num_src_))
         {
           // There are still FEC source data packets to be delivered, so
@@ -2708,9 +2855,9 @@ void SentPktManager::CleanUpOrigFecEncQueue()
         {
 #ifdef SLIQ_DEBUG
           LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
-               PRIStreamId ": FEC encoded pkt idx %" PRIFecBlock " not "
+               PRIStreamId ": FEC encoded pkt idx %" PRIFecSize " not "
                "needed for completed grp %" PRIFecGroupId ".\n", conn_id_,
-               stream_id_, fe_pkt_info.fec_blk_idx_, fe_pkt_info.fec_grp_id_);
+               stream_id_, fe_pkt_info.fec_grp_idx_, fe_pkt_info.fec_grp_id_);
 #endif
         }
       }
@@ -2720,8 +2867,8 @@ void SentPktManager::CleanUpOrigFecEncQueue()
         // Log a warning and assume that it is still needed.
         LogW(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Warning, missing FEC group info for grp %" PRIFecGroupId
-             ", keep FEC encoded pkt idx %" PRIFecBlock ".\n", conn_id_,
-             stream_id_, fe_pkt_info.fec_grp_id_, fe_pkt_info.fec_blk_idx_);
+             ", keep FEC encoded pkt idx %" PRIFecSize ".\n", conn_id_,
+             stream_id_, fe_pkt_info.fec_grp_id_, fe_pkt_info.fec_grp_idx_);
         return;
       }
     }
@@ -2729,15 +2876,15 @@ void SentPktManager::CleanUpOrigFecEncQueue()
     {
       LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
            ": Error, removing non-FEC encoded pkt grp %" PRIFecGroupId
-           " idx %" PRIFecBlock ".\n", conn_id_, stream_id_,
-           fe_pkt_info.fec_grp_id_, fe_pkt_info.fec_blk_idx_);
+           " idx %" PRIFecSize ".\n", conn_id_, stream_id_,
+           fe_pkt_info.fec_grp_id_, fe_pkt_info.fec_grp_idx_);
     }
 
     // It is not necessary to send this FEC encoded data packet.  Update the
     // number of FEC encoded data packets sent in this FEC group (pretend that
     // it actually was sent) before recycling it.
     if ((grp_info.fec_grp_id_ == fe_pkt_info.fec_grp_id_) &&
-        (grp_info.fec_round_ <= fec_target_rounds_))
+        (grp_info.fec_round_ <= grp_info.fec_max_rounds_))
     {
       ++grp_info.fec_enc_sent_icr_;
     }
@@ -2770,7 +2917,7 @@ void SentPktManager::CleanUpAddlFecEncQueue(PktSeqNumber seq_num)
         {
           // Check if all of the FEC source data packets in the FEC group have
           // been delivered.
-          if ((grp_info.fec_round_ <= fec_target_rounds_) &&
+          if ((grp_info.fec_round_ <= grp_info.fec_max_rounds_) &&
               (grp_info.fec_src_ack_cnt_ < grp_info.fec_num_src_))
           {
             // There are still FEC source data packets to be delivered, so
@@ -2818,7 +2965,7 @@ void SentPktManager::CleanUpAddlFecEncQueue(PktSeqNumber seq_num)
     // number of FEC encoded data packets sent in this FEC group (pretend that
     // it actually was sent) before recycling it.
     if ((grp_info.fec_grp_id_ == fe_pkt_info.fec_grp_id_) &&
-        (grp_info.fec_round_ <= fec_target_rounds_))
+        (grp_info.fec_round_ <= grp_info.fec_max_rounds_))
     {
       ++grp_info.fec_enc_sent_icr_;
     }
@@ -2889,8 +3036,12 @@ void SentPktManager::DropPackets(const Time& now, bool leaving_outage)
       {
         if (IS_FEC(pkt_info) && (pkt_info.fec_pkt_type_ == FEC_ENC_PKT))
         {
-          // Drop all FEC encoded packets that do not have the FIN flag set.
-          drop_pkt = (!IS_FIN(pkt_info));
+          // Drop all FEC encoded packets that are considered ACKed or lost.
+          // This keeps FEC encoded packets around long enough for their
+          // reception/loss status to update congestion control algorithms.
+          // Packets with the FIN flag set can't be skipped.
+          drop_pkt = ((IS_ACKED(pkt_info) || IS_LOST(pkt_info)) &&
+                      (!IS_FIN(pkt_info)));
         }
         else
         {
@@ -3170,7 +3321,7 @@ void SentPktManager::AddPktTtgs(const Time& now, Packet* pkt, DataHeader& hdr)
   // group information yet.
   if (grp_info.fec_grp_id_ == hdr.fec_group_id)
   {
-    is_ls = (grp_info.latency_sensitive_ != 0);
+    is_ls = IS_LAT_SENS(grp_info);
   }
   else
   {
@@ -3319,7 +3470,7 @@ void SentPktManager::UpdateSndFec(bool force_fwd)
 #ifdef SLIQ_DEBUG
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
              PRIStreamId ": Check grp %" PRIFecGroupId " : src_ack %"
-             PRIFecBlock " k %" PRIFecBlock " rexmit_cnt %" PRIRetransCount
+             PRIFecSize " k %" PRIFecSize " rexmit_cnt %" PRIRetransCount
              " rexmit_limit %" PRIRetransCount ".\n", conn_id_, stream_id_,
              grp_info.fec_grp_id_, grp_info.fec_src_ack_cnt_,
              grp_info.fec_num_src_, pkt_info.rexmit_cnt_,
@@ -3331,7 +3482,7 @@ void SentPktManager::UpdateSndFec(bool force_fwd)
         // ACKed yet, then the FEC source data packet is still needed to
         // possibly generate FEC encoded data packets.  Note that it does not
         // matter if the FEC source data packet is ACKed or not.
-        if ((grp_info.fec_round_ <= fec_target_rounds_) &&
+        if ((grp_info.fec_round_ <= grp_info.fec_max_rounds_) &&
             (grp_info.fec_src_ack_cnt_ < grp_info.fec_num_src_))
         {
 #ifdef SLIQ_DEBUG
@@ -3386,15 +3537,13 @@ void SentPktManager::RecordFecGroupPktAck(const Time& now,
   }
 
   // Check if this ACK is the first ACK received for the current group that is
-  // still sending its source and encoded packets in round 1.
-  if ((grp_info.fec_round_ == 1) &&
+  // not using pure ARQ and is still sending its source and encoded packets in
+  // round 1.
+  if ((!IS_PURE_ARQ(grp_info)) && (grp_info.fec_round_ == 1) &&
       ((grp_info.fec_src_sent_icr_ + grp_info.fec_enc_sent_icr_) <
        (grp_info.fec_num_src_ + grp_info.fec_num_enc_)) &&
       (grp_info.fec_src_ack_cnt_ == 0) && (grp_info.fec_enc_ack_cnt_ == 0))
   {
-    FecBlock  pkts_before_ack = (grp_info.fec_src_sent_icr_ +
-                                 grp_info.fec_enc_sent_icr_);
-
     // Compute the amount of time allowed for sending the source packets.
     SentPktInfo&  spi = sent_pkts_[(grp_info.start_src_seq_num_ %
                                     kFlowCtrlWindowPkts)];
@@ -3421,35 +3570,20 @@ void SentPktManager::RecordFecGroupPktAck(const Time& now,
     }
 
     // Update the dynamic source size state.
-    if (!fec_dss_init_flag_)
-    {
-      fec_dss_init_flag_         = true;
-      fec_dss_next_num_src_      = GetMaxFecSrcPkts(pkts_before_ack);
-      fec_dss_pkts_before_ack_   = pkts_before_ack;
-      fec_dss_ack_after_grp_cnt_ = 0;
-
-#ifdef SLIQ_DEBUG
-      LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": First early ACK for grp %" PRIFecGroupId " after %" PRIFecBlock
-           " pkts, next_num_src %" PRIFecBlock ".\n", conn_id_, stream_id_,
-           grp_info.fec_grp_id_, pkts_before_ack, fec_dss_next_num_src_);
-#endif
-    }
-    else
+    if (fec_dss_next_num_src_ >= grp_info.fec_num_src_)
     {
       if (fec_dss_next_num_src_ > kMinK)
       {
         fec_dss_next_num_src_ -= 1;
       }
 
-      fec_dss_pkts_before_ack_   = pkts_before_ack;
       fec_dss_ack_after_grp_cnt_ = 0;
 
 #ifdef SLIQ_DEBUG
       LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": Early ACK for grp %" PRIFecGroupId " after %" PRIFecBlock
-           " pkts, next_num_src %" PRIFecBlock ".\n", conn_id_, stream_id_,
-           grp_info.fec_grp_id_, pkts_before_ack, fec_dss_next_num_src_);
+           ": Early ACK for grp %" PRIFecGroupId ", next_num_src %" PRIFecSize
+           ".\n", conn_id_, stream_id_, grp_info.fec_grp_id_,
+           fec_dss_next_num_src_);
 #endif
     }
   }
@@ -3466,7 +3600,7 @@ void SentPktManager::RecordFecGroupPktAck(const Time& now,
     // then update the source packet sent count for the FEC group's current
     // round since it will not actually be sent.
     if (IS_CAND(pkt_info) && (grp_info.fec_round_ > 1) &&
-        (grp_info.fec_round_ <= fec_target_rounds_))
+        (grp_info.fec_round_ <= grp_info.fec_max_rounds_))
     {
       ++grp_info.fec_src_sent_icr_;
       updated_sent_icr = true;
@@ -3482,7 +3616,7 @@ void SentPktManager::RecordFecGroupPktAck(const Time& now,
     // round since it will not actually be sent.
     if (IS_CAND(pkt_info) && (grp_info.fec_gen_enc_round_ > 0) &&
         (grp_info.fec_round_ > grp_info.fec_gen_enc_round_) &&
-        (grp_info.fec_round_ <= fec_target_rounds_))
+        (grp_info.fec_round_ <= grp_info.fec_max_rounds_))
     {
       ++grp_info.fec_enc_sent_icr_;
       updated_sent_icr = true;
@@ -3504,9 +3638,9 @@ void SentPktManager::RecordFecGroupPktAck(const Time& now,
 
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-       ": Updated grp %" PRIFecGroupId " counts: src_ack %" PRIFecBlock
-       " enc_ack %" PRIFecBlock " src_to_send %" PRIFecBlock " enc_to_send %"
-       PRIFecBlock " src_sent %" PRIFecBlock " enc_sent %" PRIFecBlock ".\n",
+       ": Updated grp %" PRIFecGroupId " counts: src_ack %" PRIFecSize
+       " enc_ack %" PRIFecSize " src_to_send %" PRIFecSize " enc_to_send %"
+       PRIFecSize " src_sent %" PRIFecSize " enc_sent %" PRIFecSize ".\n",
        conn_id_, stream_id_, grp_info.fec_grp_id_, grp_info.fec_src_ack_cnt_,
        grp_info.fec_enc_ack_cnt_, grp_info.fec_src_to_send_icr_,
        grp_info.fec_enc_to_send_icr_, grp_info.fec_src_sent_icr_,
@@ -3517,15 +3651,15 @@ void SentPktManager::RecordFecGroupPktAck(const Time& now,
 //============================================================================
 bool SentPktManager::GenerateFecEncodedPkts(
   PktSeqNumber start_src_seq_num, PktSeqNumber end_src_seq_num,
-  FecGroupId grp_id, FecBlock n, FecBlock k, FecBlock enc_offset,
-  FecBlock enc_cnt, SentPktQueue& fec_enc_q, bool addl_flag)
+  FecGroupId grp_id, FecSize n, FecSize k, FecSize enc_offset,
+  FecSize enc_cnt, SentPktQueue& fec_enc_q, bool addl_flag)
 {
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
        ": Generate FEC encoded packets, start_src_seq %" PRIPktSeqNumber
        " end_src_seq %" PRIPktSeqNumber " grp %" PRIFecGroupId " coding (%"
-       PRIFecBlock ",%" PRIFecBlock ") enc_offset %" PRIFecBlock
-       " enc_count %" PRIFecBlock ".\n", conn_id_, stream_id_,
+       PRIFecSize ",%" PRIFecSize ") enc_offset %" PRIFecSize
+       " enc_count %" PRIFecSize ".\n", conn_id_, stream_id_,
        start_src_seq_num, end_src_seq_num, grp_id, n, k, enc_offset, enc_cnt);
 #endif
 
@@ -3543,8 +3677,8 @@ bool SentPktManager::GenerateFecEncodedPkts(
   if ((enc_cnt == 0) || ((enc_offset + enc_cnt) > (n - k)))
   {
     LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Error, invalid offset %" PRIFecBlock " count %" PRIFecBlock
-         " for (%" PRIFecBlock ",%" PRIFecBlock ") coding.\n", conn_id_,
+         ": Error, invalid offset %" PRIFecSize " count %" PRIFecSize
+         " for (%" PRIFecSize ",%" PRIFecSize ") coding.\n", conn_id_,
          stream_id_, enc_offset, enc_cnt, n, k);
     return false;
   }
@@ -3554,7 +3688,7 @@ bool SentPktManager::GenerateFecEncodedPkts(
   if ((fec_enc_q.GetCount() + enc_cnt) > fec_enc_q.GetMaxSize())
   {
     LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Error, %" PRIFecBlock " FEC encoded packets will not fit in "
+         ": Error, %" PRIFecSize " FEC encoded packets will not fit in "
          "queue with %" PRIWindowSize " of %" PRIWindowSize " already "
          "used.\n", conn_id_, stream_id_, enc_cnt, fec_enc_q.GetCount(),
          fec_enc_q.GetMaxSize());
@@ -3663,12 +3797,12 @@ bool SentPktManager::GenerateFecEncodedPkts(
   }
 
   // Prepare the FEC encoded data packet information.
-  FecBlock    blk_idx     = (k + enc_offset);
-  FecBlock    enc_idx     = enc_offset;
+  FecSize     grp_idx     = (k + enc_offset);
+  FecSize     enc_idx     = enc_offset;
   WindowSize  start_q_idx = fec_enc_q.GetCount();
   WindowSize  q_idx       = start_q_idx;
 
-  for (i = 0; i < enc_cnt; ++i, ++blk_idx, ++enc_idx)
+  for (i = 0; i < enc_cnt; ++i, ++grp_idx, ++enc_idx)
   {
     // Add a new entry at the tail of the queue, then get the new tail entry
     // to use.
@@ -3714,7 +3848,7 @@ bool SentPktManager::GenerateFecEncodedPkts(
     fe_pkt_info.flags_        = 0;
     SET_FEC(fe_pkt_info);
     fe_pkt_info.fec_grp_id_   = grp_id;
-    fe_pkt_info.fec_blk_idx_  = blk_idx;
+    fe_pkt_info.fec_grp_idx_  = grp_idx;
     fe_pkt_info.fec_num_src_  = k;
     fe_pkt_info.fec_round_    = 0;
     fe_pkt_info.fec_pkt_type_ = static_cast<uint8_t>(FEC_ENC_PKT);
@@ -3794,8 +3928,11 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
   grp_info.fec_enc_sent_icr_ = 0;
 
   // Handle the case when there are no more rounds.
-  if (grp_info.fec_round_ > fec_target_rounds_)
+  if (grp_info.fec_round_ > grp_info.fec_max_rounds_)
   {
+    // There are no more rounds, so set the round number to the special "out
+    // of rounds" value.
+    grp_info.fec_round_           = kOutOfRounds;
     grp_info.fec_src_to_send_icr_ = 0;
     grp_info.fec_enc_to_send_icr_ = 0;
 
@@ -3803,12 +3940,13 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
          ": FEC grp %" PRIFecGroupId " out of rounds (%" PRIFecRound " > %"
          PRIFecRound ").\n", conn_id_, stream_id_, grp_info.fec_grp_id_,
-         grp_info.fec_round_, fec_target_rounds_);
+         grp_info.fec_round_, grp_info.fec_max_rounds_);
 #endif
 
     return false;
   }
 
+  // Create local variables for the current group status.
   int32_t  num_src  = grp_info.fec_num_src_;
   int32_t  num_enc  = grp_info.fec_num_enc_;
   int32_t  src_rcvd = grp_info.fec_src_ack_cnt_;
@@ -3816,39 +3954,53 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
   int32_t  src_lost = ((src_rcvd <= num_src) ? (num_src - src_rcvd) : 0);
   int32_t  enc_lost = ((enc_rcvd <= num_enc) ? (num_enc - enc_rcvd) : 0);
 
-  // Use the correct FEC lookup table to determine the total number of packets
-  // to be sent.
+  // Determine the total number of packets to be sent.
   int32_t  total_to_send = 0;
-  size_t   idx           = TABLE_OFFSET(num_src, src_rcvd, enc_rcvd);
 
-  if (idx >= kFecTableSize)
+  if (IS_PURE_ARQ(grp_info))
   {
-    LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Error, invalid FEC lookup table index %zu ([%" PRId32 "][%" PRId32
-         "][%" PRId32 "]) for FEC grp %" PRIFecGroupId " round %" PRIFecRound
-         ".\n", conn_id_, stream_id_, idx, num_src, src_rcvd, enc_rcvd,
-         grp_info.fec_grp_id_, grp_info.fec_round_);
-  }
-
-  if (grp_info.fec_round_ < fec_target_rounds_)
-  {
-    // Not in the last round yet.  Use the midgame table.
-    total_to_send = fec_midgame_table_[idx];
+    // Pure ARQ is in use.  Only send the necessary FEC source packets.
+    total_to_send = src_lost;
   }
   else
   {
-    // In the last round now.  Use the endgame table.
-    total_to_send = fec_endgame_table_[idx];
-  }
+    // Use the correct FEC lookup table to determine the total number of
+    // packets to be sent.
+    size_t  idx = TableOffset(fec_per_idx_, grp_info.fec_num_src_,
+                              grp_info.fec_src_ack_cnt_,
+                              grp_info.fec_enc_ack_cnt_);
+
+    if ((grp_info.fec_max_rounds_ >= kNumLookupTables) ||
+        (fec_midgame_tables_[grp_info.fec_max_rounds_] == NULL) ||
+        (fec_endgame_tables_[grp_info.fec_max_rounds_] == NULL))
+    {
+      LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+           ": Error, missing FEC lookup tables for n %" PRIFecRound ".\n",
+           conn_id_, stream_id_, grp_info.fec_max_rounds_);
+    }
+
+    if (grp_info.fec_round_ < grp_info.fec_max_rounds_)
+    {
+      // Not in the last round yet.  Use the midgame table.
+      total_to_send = fec_midgame_tables_[grp_info.fec_max_rounds_][idx];
+    }
+    else
+    {
+      // In the last round now.  Use the endgame table.
+      total_to_send = fec_endgame_tables_[grp_info.fec_max_rounds_][idx];
+    }
 
 #ifdef SLIQ_DEBUG
-  LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-       ": FEC grp %" PRIFecGroupId " round %" PRIFecRound " %sgame[%"
-       PRId32 "][%" PRId32 "][%" PRId32 "] = %" PRId32 "\n", conn_id_,
-       stream_id_, grp_info.fec_grp_id_, grp_info.fec_round_,
-       ((grp_info.fec_round_ < fec_target_rounds_) ? "mid" : "end"),
-       num_src, src_rcvd, enc_rcvd, total_to_send);
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": FEC grp %" PRIFecGroupId " round %" PRIFecRound " %sgame[%"
+         PRIFecRound "][%zu][%" PRId32 "][%" PRId32 "][%" PRId32 "] = %"
+         PRId32 "\n", conn_id_, stream_id_, grp_info.fec_grp_id_,
+         grp_info.fec_round_,
+         ((grp_info.fec_round_ < grp_info.fec_max_rounds_) ? "mid" : "end"),
+         grp_info.fec_round_, fec_per_idx_, num_src, src_rcvd, enc_rcvd,
+         total_to_send);
 #endif
+  }
 
   // Divide the total number of packets to send into the number of source and
   // encoded packets to generate/send/resend.
@@ -3874,16 +4026,16 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
       enc_to_rx  = enc_lost;
 
       if ((num_src + num_enc + enc_to_gen) >
-          static_cast<int32_t>(kMaxFecBlockLengthPkts))
+          static_cast<int32_t>(kMaxFecGroupLengthPkts))
       {
         LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Error, FEC grp %" PRIFecGroupId " cannot generate %" PRId32
              " enc pkts, will only generate %" PRId32 " enc pkts.\n",
              conn_id_, stream_id_, static_cast<int32_t>(num_enc + enc_to_gen),
-             grp_info.fec_grp_id_, static_cast<int32_t>(kMaxFecBlockLengthPkts
+             grp_info.fec_grp_id_, static_cast<int32_t>(kMaxFecGroupLengthPkts
                                                         - num_src));
 
-        enc_to_gen  = static_cast<int32_t>(kMaxFecBlockLengthPkts - num_src -
+        enc_to_gen  = static_cast<int32_t>(kMaxFecGroupLengthPkts - num_src -
                                            num_enc);
         enc_to_send = (enc_to_rx + enc_to_gen);
       }
@@ -3896,7 +4048,7 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
        ": FEC grp %" PRIFecGroupId " round %" PRIFecRound " sending src %"
-       PRIFecBlock " enc %" PRIFecBlock " (gen %" PRId32 " rx %" PRId32 ")\n",
+       PRIFecSize " enc %" PRIFecSize " (gen %" PRId32 " rx %" PRId32 ")\n",
        conn_id_, stream_id_, grp_info.fec_grp_id_, grp_info.fec_round_,
        grp_info.fec_src_to_send_icr_, grp_info.fec_enc_to_send_icr_,
        enc_to_gen, enc_to_rx);
@@ -3922,8 +4074,9 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
          grp_info.fec_grp_id_, grp_info.start_src_seq_num_,
          grp_info.start_enc_seq_num_, snd_fec_);
 
-    // End all rounds.
-    grp_info.fec_round_           = (fec_target_rounds_ + 1);
+    // End all rounds.  Set the round number to the special "out of rounds"
+    // value.
+    grp_info.fec_round_           = kOutOfRounds;
     grp_info.fec_src_to_send_icr_ = 0;
     grp_info.fec_enc_to_send_icr_ = 0;
 
@@ -3931,7 +4084,7 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
   }
 
   PktSeqNumber  seq_num  = 0;
-  FecBlock      cand_cnt = 0;
+  FecSize       cand_cnt = 0;
 
   // Generate all of the FEC source packet fast retransmit candidates.
   if (src_frc)
@@ -3975,8 +4128,8 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
     if (cand_cnt < grp_info.fec_src_to_send_icr_)
     {
       LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": Error, FEC grp %" PRIFecGroupId " only generated %" PRIFecBlock
-           " out of %" PRIFecBlock " FEC src rexmits.\n", conn_id_,
+           ": Error, FEC grp %" PRIFecGroupId " only generated %" PRIFecSize
+           " out of %" PRIFecSize " FEC src rexmits.\n", conn_id_,
            stream_id_, grp_info.fec_grp_id_, cand_cnt,
            grp_info.fec_src_to_send_icr_);
       grp_info.fec_src_to_send_icr_ = cand_cnt;
@@ -3989,7 +4142,7 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
     for (seq_num = grp_info.start_enc_seq_num_, cand_cnt = 0;
          (SEQ_LEQ(seq_num, grp_info.end_enc_seq_num_) &&
           SEQ_LT(seq_num, snd_nxt_) &&
-          (cand_cnt < static_cast<FecBlock>(enc_to_rx))); ++seq_num)
+          (cand_cnt < static_cast<FecSize>(enc_to_rx))); ++seq_num)
     {
       SentPktInfo&  pkt_info = sent_pkts_[(seq_num % kFlowCtrlWindowPkts)];
 
@@ -4022,13 +4175,13 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
       }
     }
 
-    if (cand_cnt < static_cast<FecBlock>(enc_to_rx))
+    if (cand_cnt < static_cast<FecSize>(enc_to_rx))
     {
       LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": Error, FEC grp %" PRIFecGroupId " only generated %" PRIFecBlock
+           ": Error, FEC grp %" PRIFecGroupId " only generated %" PRIFecSize
            " out of %" PRId32 " FEC enc rexmits.\n", conn_id_,
            stream_id_, grp_info.fec_grp_id_, cand_cnt, enc_to_rx);
-      grp_info.fec_enc_to_send_icr_ -= (static_cast<FecBlock>(enc_to_rx) -
+      grp_info.fec_enc_to_send_icr_ -= (static_cast<FecSize>(enc_to_rx) -
                                         cand_cnt);
     }
   }
@@ -4038,13 +4191,13 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
   {
     // In round 1, simply record the number of FEC encoded packets to generate
     // later in AddSentPkt().
-    grp_info.fec_num_enc_ = static_cast<FecBlock>(enc_to_gen);
+    grp_info.fec_num_enc_ = static_cast<FecSize>(enc_to_gen);
   }
   else if (enc_to_gen > 0)
   {
     if (!GenerateFecEncodedPkts(
           grp_info.start_src_seq_num_, grp_info.end_src_seq_num_,
-          grp_info.fec_grp_id_, kMaxFecBlockLengthPkts, grp_info.fec_num_src_,
+          grp_info.fec_grp_id_, kMaxFecGroupLengthPkts, grp_info.fec_num_src_,
           grp_info.fec_num_enc_, enc_to_gen, fec_enc_addl_, true))
     {
       LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
@@ -4061,7 +4214,7 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
 
     // Update the total number of FEC encoded packets generated thus far, and
     // record the round when the FEC encoded packets were first generated.
-    grp_info.fec_num_enc_ += static_cast<FecBlock>(enc_to_gen);
+    grp_info.fec_num_enc_ += static_cast<FecSize>(enc_to_gen);
 
     if (grp_info.fec_gen_enc_round_ == 0)
     {
@@ -4072,71 +4225,15 @@ bool SentPktManager::PrepareNextFecRound(FecGroupInfo& grp_info)
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
        ": FEC grp %" PRIFecGroupId " starting round %" PRIFecRound " with "
-       "src %" PRIFecBlock " enc %" PRIFecBlock ": src_ack %" PRIFecBlock
-       " enc_ack %" PRIFecBlock " src_to_send %" PRIFecBlock " enc_to_send %"
-       PRIFecBlock ".\n", conn_id_, stream_id_, grp_info.fec_grp_id_,
+       "src %" PRIFecSize " enc %" PRIFecSize ": src_ack %" PRIFecSize
+       " enc_ack %" PRIFecSize " src_to_send %" PRIFecSize " enc_to_send %"
+       PRIFecSize ".\n", conn_id_, stream_id_, grp_info.fec_grp_id_,
        grp_info.fec_round_, grp_info.fec_num_src_, grp_info.fec_num_enc_,
        grp_info.fec_src_ack_cnt_, grp_info.fec_enc_ack_cnt_,
        grp_info.fec_src_to_send_icr_, grp_info.fec_enc_to_send_icr_);
 #endif
 
   return true;
-}
-
-//============================================================================
-FecBlock SentPktManager::GetMaxFecSrcPkts(int32_t max_dof)
-{
-  // Use the correct FEC lookup table to perform a reverse lookup, finding the
-  // maximum number of FEC source packets allowed for the specified maximum
-  // DOF.  Loop over all supported numbers of FEC source packets per FEC
-  // group, from maximum value to minimum value.
-  int32_t  num_src = 0;
-
-  for (num_src = kMaxK; num_src >= kMinK; --num_src)
-  {
-    int32_t  dof = 0;
-    size_t   idx = TABLE_OFFSET(num_src, 0, 0);
-
-    if (idx >= kFecTableSize)
-    {
-      LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": Error, invalid FEC lookup table index %zu ([%" PRId32
-           "][0][0]).\n", conn_id_, stream_id_, idx, num_src);
-    }
-
-    if (fec_target_rounds_ > 1)
-    {
-      // Use the midgame table.
-      dof = fec_midgame_table_[idx];
-    }
-    else
-    {
-      // Use the endgame table.
-      dof = fec_endgame_table_[idx];
-    }
-
-    // If this DOF is less than or equal to the maximum DOF allowed, then this
-    // is the correct number of FEC source packets.
-    if (dof <= max_dof)
-    {
-#ifdef SLIQ_DEBUG
-      LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": %sgame[%" PRId32 "][0][0] = %" PRId32 " (<= %" PRId32 ").\n",
-           conn_id_, stream_id_, ((fec_target_rounds_ > 1) ? "mid" : "end"),
-           num_src, dof, max_dof);
-#endif
-
-      return static_cast<FecBlock>(num_src);
-    }
-  }
-
-#ifdef SLIQ_DEBUG
-  LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-       ": Unable to find reverse lookup for max_dof=%" PRId32 ".\n",
-       conn_id_, stream_id_, max_dof);
-#endif
-
-  return static_cast<FecBlock>(kMinK);
 }
 
 //============================================================================
@@ -4172,73 +4269,53 @@ void SentPktManager::RecordEndOfFecRound(const Time& now,
 
   // Check if no ACKs have been received for the current group that is done
   // sending its source and encoded packets in round 1.
-  if ((grp_info.fec_round_ == 1) && (grp_info.fec_src_ack_cnt_ == 0) &&
-      (grp_info.fec_enc_ack_cnt_ == 0))
+  if ((!IS_PURE_ARQ(grp_info)) && (grp_info.fec_round_ == 1) &&
+      (grp_info.fec_src_ack_cnt_ == 0) && (grp_info.fec_enc_ack_cnt_ == 0))
   {
-    FecBlock  pkts_before_ack = (grp_info.fec_num_src_ +
-                                 grp_info.fec_num_enc_);
+    // Update the dynamic source size state.
+    fec_dss_ack_after_grp_cnt_ += 1;
 
-    if (!fec_dss_init_flag_)
+    if (fec_dss_ack_after_grp_cnt_ >= kFecAckAfterGrpCnt)
     {
-      fec_dss_init_flag_         = true;
-      fec_dss_next_num_src_      = kMaxK;
-      fec_dss_pkts_before_ack_   = pkts_before_ack;
+      if (fec_dss_next_num_src_ < kMaxK)
+      {
+        fec_dss_next_num_src_ += 1;
+      }
+
       fec_dss_ack_after_grp_cnt_ = 0;
-
-#ifdef SLIQ_DEBUG
-      LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": First no ACK for grp %" PRIFecGroupId " after %" PRIFecBlock
-           " pkts, next_num_src %" PRIFecBlock ".\n", conn_id_, stream_id_,
-           grp_info.fec_grp_id_, pkts_before_ack, fec_dss_next_num_src_);
-#endif
     }
-    else
-    {
-      fec_dss_ack_after_grp_cnt_ += 1;
-
-      if (fec_dss_ack_after_grp_cnt_ >= kFecAckAfterGrpCnt)
-      {
-        if (fec_dss_next_num_src_ < kMaxK)
-        {
-          fec_dss_next_num_src_ += 1;
-        }
-
-        fec_dss_pkts_before_ack_   = pkts_before_ack;
-        fec_dss_ack_after_grp_cnt_ = 0;
-      }
-
-      if (((grp_info.fec_num_src_ + grp_info.fec_num_enc_) > 1) &&
-          (grp_info.force_end_ == 0))
-      {
-        SentPktInfo&  spi = sent_pkts_[(grp_info.start_src_seq_num_ %
-                                        kFlowCtrlWindowPkts)];
-
-        if ((spi.seq_num_ == grp_info.start_src_seq_num_) && IS_FEC(spi) &&
-            (spi.fec_grp_id_ == grp_info.fec_grp_id_) &&
-            (spi.fec_pkt_type_ == FEC_SRC_PKT))
-        {
-          double  tot = (now - Time(spi.xmit_time_)).ToDouble();
-          double  ips =
-            (tot / (static_cast<double>(grp_info.fec_num_src_ +
-                                        grp_info.fec_num_enc_ - 1)));
-
-          if (stats_pkt_ist_ < 0.0)
-          {
-            stats_pkt_ist_ = ips;
-          }
-          else
-          {
-            stats_pkt_ist_ = ((0.05 * ips) + (0.95 * stats_pkt_ist_));
-          }
-        }
-      }
 
 #ifdef SLIQ_DEBUG
-      LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": No ACK for grp %" PRIFecGroupId " after %" PRIFecBlock
-           " pkts, next_num_src %" PRIFecBlock ".\n", conn_id_, stream_id_,
-           grp_info.fec_grp_id_, pkts_before_ack, fec_dss_next_num_src_);
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": No ACK for grp %" PRIFecGroupId ", next_num_src %" PRIFecSize
+         ".\n", conn_id_, stream_id_, grp_info.fec_grp_id_,
+         fec_dss_next_num_src_);
 #endif
+
+    // Update the packet inter-send time.
+    FecSize  pkts = (grp_info.fec_num_src_ + grp_info.fec_num_enc_);
+
+    if ((pkts > 1) && (!IS_FORCE_END(grp_info)))
+    {
+      SentPktInfo&  spi = sent_pkts_[(grp_info.start_src_seq_num_ %
+                                      kFlowCtrlWindowPkts)];
+
+      if ((spi.seq_num_ == grp_info.start_src_seq_num_) && IS_FEC(spi) &&
+          (spi.fec_grp_id_ == grp_info.fec_grp_id_) &&
+          (spi.fec_pkt_type_ == FEC_SRC_PKT))
+      {
+        double  tot = (now - Time(spi.xmit_time_)).ToDouble();
+        double  ips = (tot / static_cast<double>(pkts - 1));
+
+        if (stats_pkt_ist_ < 0.0)
+        {
+          stats_pkt_ist_ = ips;
+        }
+        else
+        {
+          stats_pkt_ist_ = ((0.05 * ips) + (0.95 * stats_pkt_ist_));
+        }
+      }
     }
   }
 }
@@ -4259,7 +4336,7 @@ void SentPktManager::ProcessEndOfFecRounds(PktSeqNumber seq_num,
   }
 
   FecGroupId    grp_id  = pkt_info.fec_grp_id_;
-  FecBlock      blk_idx = pkt_info.fec_blk_idx_;
+  FecSize       grp_idx = pkt_info.fec_grp_idx_;
   PktTimestamp  snd_ts  = pkt_info.fec_ts_;
 
   // The send timestamp must be less than or equal to the observed packet
@@ -4277,11 +4354,11 @@ void SentPktManager::ProcessEndOfFecRounds(PktSeqNumber seq_num,
 
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Checking grp %" PRIFecGroupId " idx %" PRIFecBlock " seq %"
+         ": Checking grp %" PRIFecGroupId " idx %" PRIFecSize " seq %"
          PRIPktSeqNumber " snd_ts %" PRIPktTimestamp " obs_ts %"
          PRIPktTimestamp " against end-of-round grp %" PRIFecGroupId " bvec %"
          PRIFecGroupBitVec " ts %" PRIPktTimestamp ".\n", conn_id_,
-         stream_id_, grp_id, blk_idx, seq_num, snd_ts, obs_ts,
+         stream_id_, grp_id, grp_idx, seq_num, snd_ts, obs_ts,
          rnd_info.fec_grp_id_, rnd_info.obs_pkt_bvec_, rnd_info.pkt_ts_);
 #endif
 
@@ -4291,7 +4368,7 @@ void SentPktManager::ProcessEndOfFecRounds(PktSeqNumber seq_num,
 
     if ((grp_id == rnd_info.fec_grp_id_) &&
         ((rnd_info.obs_pkt_bvec_ &
-          (static_cast<FecGroupBitVec>(1) << blk_idx)) != 0))
+          (static_cast<FecGroupBitVec>(1) << grp_idx)) != 0))
     {
       // The observed packet timestamp is from a duplicate ACK.  Compare the
       // received timestamp with an adjusted end of round timestamp (to
@@ -4314,7 +4391,7 @@ void SentPktManager::ProcessEndOfFecRounds(PktSeqNumber seq_num,
     // observed packet in the group's bit vector.
     if (good_snd_ts && (grp_id == rnd_info.fec_grp_id_))
     {
-      rnd_info.obs_pkt_bvec_ |= (static_cast<FecGroupBitVec>(1) << blk_idx);
+      rnd_info.obs_pkt_bvec_ |= (static_cast<FecGroupBitVec>(1) << grp_idx);
     }
 
     if (eor_reached)
@@ -4325,13 +4402,13 @@ void SentPktManager::ProcessEndOfFecRounds(PktSeqNumber seq_num,
 
       if (grp_info.fec_grp_id_ == rnd_info.fec_grp_id_)
       {
-        // If all of the FEC source packets in the FEC group have been ACKed,
-        // then processing for the FEC group is over.
-        if (grp_info.fec_src_ack_cnt_ >= grp_info.fec_num_src_)
+        // If enough of the FEC source and encoded packets in the FEC group
+        // have been ACKed, then processing for the FEC group is over.
+        if ((grp_info.fec_src_ack_cnt_ + grp_info.fec_enc_ack_cnt_) >=
+            grp_info.fec_num_src_)
         {
-          // Mark the FEC group as done by setting the round just beyond the
-          // target number of rounds.
-          grp_info.fec_round_ = (fec_target_rounds_ + 1);
+          // Set the round number to the special "out of rounds" value.
+          grp_info.fec_round_ = kOutOfRounds;
 
 #ifdef SLIQ_DEBUG
           LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
@@ -4341,11 +4418,6 @@ void SentPktManager::ProcessEndOfFecRounds(PktSeqNumber seq_num,
         }
         else
         {
-          // There are still unACKed FEC source packets for the FEC group.
-          // Use the PER to update the FEC lookup tables in preparation for
-          // starting another round.
-          UpdateFecTables();
-
           // Prepare what packets should be sent in the next round using the
           // FEC lookup tables, if another round is allowed.  This will
           // increment the current round.
@@ -4394,218 +4466,489 @@ void SentPktManager::ProcessEndOfFecRounds(PktSeqNumber seq_num,
 }
 
 //============================================================================
-void SentPktManager::StartNextFecBlock()
+void SentPktManager::StartNextFecGroup()
 {
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
        ": End of FEC grp %" PRIFecGroupId " start of FEC grp %" PRIFecGroupId
-       " \n", conn_id_, stream_id_, fec_grp_, (fec_grp_ + 1));
+       " \n", conn_id_, stream_id_, fec_grp_id_, (fec_grp_id_ + 1));
 #endif
 
-  // Move to the next FEC block.
-  fec_blk_idx_ = 0;
-  ++fec_grp_;
+  // Move to the next FEC group.
+  fec_grp_idx_ = 0;
+  ++fec_grp_id_;
 }
 
 //============================================================================
-void SentPktManager::UpdateFecTables(bool force_update)
+bool SentPktManager::CreateFecTables()
 {
-  // Get the latest PER estimate for the connection.
+  // Allocate only the necessary FEC lookup tables.
+  FecRound  min_n = (rel_.fec_del_time_flag ? kMinN : fec_target_rounds_);
+  FecRound  max_n = (rel_.fec_del_time_flag ? kMaxN : fec_target_rounds_);
+
+  for (FecRound n = min_n; n <= max_n; ++n)
+  {
+    if (!AllocateFecTables(n))
+    {
+      LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+           ": Error allocating FEC lookup tables at N=%" PRIFecRound ".\n",
+           conn_id_, stream_id_, n);
+      return false;
+    }
+  }
+
+  // Get the value of Epsilon to use in the tables.
+  fec_epsilon_idx_ = 0;
+
+  for (ssize_t i = (kNumEps - 1); i >= 0; --i)
+  {
+    if (rel_.fec_target_pkt_recv_prob <= (1.0 - kEpsilon[i]))
+    {
+      fec_epsilon_idx_ = i;
+      break;
+    }
+  }
+
+  double  eps = kEpsilon[fec_epsilon_idx_];
+
+#ifdef SLIQ_DEBUG
+  LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId ": "
+       "Map epsilon from %f to %f (index %zu) for use in lookup tables.\n",
+       conn_id_, stream_id_, (1.0 - rel_.fec_target_pkt_recv_prob), eps,
+       fec_epsilon_idx_);
+#endif
+
+  // Set the lookup tables.  Loop over all target number of rounds (N) values.
+  for (FecRound n = kMinN; n <= kMaxN; ++n)
+  {
+    // Only populate the tables if they are allocated.
+    if ((fec_midgame_tables_[n] == NULL) || (fec_endgame_tables_[n] == NULL))
+    {
+      continue;
+    }
+
+    // Loop over all PER (p) values.
+    for (size_t per_idx = 0; per_idx < kNumPers; ++per_idx)
+    {
+      double  per = kPerVals[per_idx];
+
+      // Determine how many rounds would be needed for pure ARQ.  Given that
+      // per can be a maximum of 0.5 and eps can be a minimum of 0.001,
+      // arq_cutover cannot be larger than 10.
+      FecRound  arq_cutover = 1;
+      double    test_p_loss = per;
+
+      while (test_p_loss > eps)
+      {
+        test_p_loss *= per;
+        ++arq_cutover;
+      }
+
+      if (n >= arq_cutover)
+      {
+        // Use pure ARQ.
+        for (FecSize k = kMinK; k <= kMaxK; ++k)
+        {
+          for (FecSize sr = 0; sr < k; ++sr)
+          {
+            for (FecSize cr = 0; cr < (k - sr); ++cr)
+            {
+              size_t  idx = TableOffset(per_idx, k, sr, cr);
+
+              fec_midgame_tables_[n][idx] = (uint8_t)(k - sr);
+              fec_endgame_tables_[n][idx] = (uint8_t)(k - sr);
+            }
+          }
+        }
+      }
+      else
+      {
+        for (FecSize k = kMinK; k <= kMaxK; ++k)
+        {
+          // Lookup the midgame probability of packet receive given the
+          // current values.
+          double  midgame_p_recv =
+            kMidgameParms[k - 1][per_idx][n - 1][fec_epsilon_idx_];
+
+          // A midgame_p_recv value of 0.0 signals that we should use an
+          // ARQ-like midgame lookup table.
+          if (midgame_p_recv < 0.001)
+          {
+            for (FecSize sr = 0; sr < k; ++sr)
+            {
+              for (FecSize cr = 0; cr < (k - sr); ++cr)
+              {
+                size_t  idx = TableOffset(per_idx, k, sr, cr);
+
+                fec_midgame_tables_[n][idx] = (k - sr);
+              }
+            }
+          }
+          else
+          {
+            for (FecSize sr = 0; sr < k; ++sr)
+            {
+              for (FecSize cr = 0; cr < (k - sr); ++cr)
+              {
+                size_t  idx = TableOffset(per_idx, k, sr, cr);
+
+                CalculateConditionalSimpleFecDofToSend(
+                  kMaxFecGroupLengthPkts, per, midgame_p_recv, k, sr, cr,
+                  fec_midgame_tables_[n][idx]);
+              }
+            }
+          }
+
+          // Lookup the endgame probability of packet receive given the
+          // current values.
+          double  endgame_p_recv =
+            kEndgameParms[k - 1][per_idx][n - 1][fec_epsilon_idx_];
+
+          for (FecSize sr = 0; sr < k; ++sr)
+          {
+            for (FecSize cr = 0; cr < (k - sr); ++cr)
+            {
+              size_t  idx = TableOffset(per_idx, k, sr, cr);
+
+              CalculateConditionalSystematicFecDofToSend(
+                kMaxFecGroupLengthPkts, per, endgame_p_recv, k, sr, cr,
+                fec_endgame_tables_[n][idx]);
+            }
+          }
+        } // end k loop
+      } // end if pure ARQ
+    } // end per_idx loop
+  } // end n loop
+
+  return true;
+}
+
+//============================================================================
+bool SentPktManager::AllocateFecTables(FecRound n)
+{
+  // Allocate the midgame and endgame FEC lookup tables for the specified
+  // target number of rounds.
+  fec_midgame_tables_[n] = new (std::nothrow) uint8_t[kFecTableSize];
+  fec_endgame_tables_[n] = new (std::nothrow) uint8_t[kFecTableSize];
+
+  if ((fec_midgame_tables_[n] == NULL) || (fec_endgame_tables_[n] == NULL))
+  {
+    return false;
+  }
+
+  memset(fec_midgame_tables_[n], 0, (kFecTableSize * sizeof(uint8_t)));
+  memset(fec_endgame_tables_[n], 0, (kFecTableSize * sizeof(uint8_t)));
+
+  return true;
+}
+
+//============================================================================
+bool SentPktManager::UpdateFecTableParams()
+{
+  // Get the latest PER estimate (p) for the connection and map it into a PER
+  // index for the FEC lookup tables.  These are stored in fec_per_ and
+  // fec_per_idx_.
   double  new_per = conn_.StatsGetLocalPer();
 
-  // If the PER has changed or the force_update flag is true, then update the
-  // FEC lookup tables.
-  if ((new_per != stats_per_) || force_update)
+  if (new_per != fec_per_)
   {
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Old PER %f new PER %f sRTT %f\n", conn_id_, stream_id_,
-         stats_per_, new_per, rtt_mgr_.smoothed_rtt().ToDouble());
+         ": Old PER %f new PER %f sRTT %f\n", conn_id_, stream_id_, fec_per_,
+         new_per, rtt_mgr_.smoothed_rtt().ToDouble());
 #endif
 
-    // Determine how many rounds would be needed if we use pure ARQ.
-    FecRound  arq_cutover = 1;
-    double    test_p_loss = new_per;
+    fec_per_     = new_per;
+    fec_per_idx_ = (kNumPers - 1);
 
-    while (test_p_loss > (1.0 - rel_.fec_target_pkt_recv_prob))
+    for (size_t i = 0; i < kNumPers; ++i)
     {
-      test_p_loss *= new_per;
-      ++arq_cutover;
+      if (kPerVals[i] >= new_per)
+      {
+        fec_per_idx_ = i;
+        break;
+      }
     }
 
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": ARQ cutover occurs at %" PRIFecRound " rounds.\n", conn_id_,
-         stream_id_, arq_cutover);
+         ": Map PER from %f to %f (index %zu) for use in lookup tables.\n",
+         conn_id_, stream_id_, new_per, kPerVals[fec_per_idx_], fec_per_idx_);
+#endif
+  }
+
+  // If the target number of rounds (N) is fixed, then fec_target_rounds_ is
+  // already set correctly and there is nothing else to do here.  The number
+  // of source packets per group (k) will be completely controlled by
+  // fec_dss_next_num_src_ in this case.  The use of Pure ARQ depends on the
+  // FEC lookup table results, and is not guaranteed.
+  if (!rel_.fec_del_time_flag)
+  {
+    return false;
+  }
+
+  // The target number of rounds (N) is controlled by the specified packet
+  // delivery time limit and the current RTT and OWD estimates.  Find the
+  // target number of rounds that will meet the specified packet delivery time
+  // limit.  There are three different scenarios that must be tested in order
+  // to find N.
+
+  // First, check if pure ARQ can be used with just a single round.  This is a
+  // very easy test.  Use the exact target packet receive probability and the
+  // exact PER estimate.
+  if ((fec_per_ <= 0.000001) ||
+      ((1.0 - fec_per_) >= rel_.fec_target_pkt_recv_prob))
+  {
+#ifdef SLIQ_DEBUG
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": Pure ARQ will work, set N to 1, k to 1.\n", conn_id_, stream_id_);
 #endif
 
-    // Clear the lookup tables.
-    memset(fec_midgame_table_, 0, (kFecTableSize * sizeof(int32_t)));
-    memset(fec_endgame_table_, 0, (kFecTableSize * sizeof(int32_t)));
+    // Update the target number of rounds (N) to one, and the number of source
+    // packets per group (k) to 1 using the returned pure ARQ flag.
+    fec_target_rounds_         = 1;
+    fec_dss_ack_after_grp_cnt_ = 0;
 
-    // Set the lookup tables.
-    size_t  i        = 0;
-    size_t  num_src  = 0;
-    size_t  src_rcvd = 0;
-    size_t  enc_rcvd = 0;
-    size_t  idx      = 0;
+    ++stats_pkts_.fec_grp_pure_arq_1_;
 
-    if (fec_target_rounds_ >= arq_cutover)
+    return true;
+  }
+
+  // Second, determine how many rounds would be needed if pure ARQ is used.
+  // This requires a loop.  Again, use the exact target packet receive
+  // probability and the exact PER estimate.  Limit arq_cutover to the maximum
+  // supported number of rounds for each FEC group (determined by the size of
+  // the 4-bit round field in the Data Header, and the round value 15 reserved
+  // for the "out of rounds" value).
+  bool    valid_result = true;
+  size_t  arq_cutover  = 1;
+  double  test_eps     = (1.0 - rel_.fec_target_pkt_recv_prob);
+  double  test_p_loss  = fec_per_;
+
+  while (test_p_loss > test_eps)
+  {
+    test_p_loss *= fec_per_;
+    ++arq_cutover;
+
+    if (arq_cutover >= kOutOfRounds)
     {
-      // Use pure ARQ.
-      for (num_src = kMinK; num_src <= kMaxK; ++num_src)
-      {
-        for (src_rcvd = 0; src_rcvd < num_src; ++src_rcvd)
-        {
-          for (enc_rcvd = 0; enc_rcvd < (num_src - src_rcvd); ++enc_rcvd)
-          {
-            idx = TABLE_OFFSET(num_src, src_rcvd, enc_rcvd);
+      valid_result = false;
+      break;
+    }
+  }
 
-            fec_midgame_table_[idx] = (num_src - src_rcvd);
-            fec_endgame_table_[idx] = (num_src - src_rcvd);
-          }
-        }
-      }
+  // Get the maximum RTT estimate and the maximum local-to-remote one-way
+  // delay estimate.  These will be needed to make packet delivery time
+  // estimates.
+  double  max_rtt_sec     = rtt_mgr_.maximum_rtt().ToDouble();
+  double  max_ltr_owd_sec = conn_.GetMaxLtrOwdEst().ToDouble();
 
+  if (max_ltr_owd_sec <= 0.0)
+  {
+    LogA(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": Max OWD not available, using %f\n", conn_id_, stream_id_,
+         (0.5 * max_rtt_sec));
+    max_ltr_owd_sec = (0.5 * max_rtt_sec);
+  }
+
+  // Only continue checking the pure ARQ case if the ARQ cutover value is
+  // valid.
+  if (valid_result)
+  {
+#ifdef SLIQ_DEBUG
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": ARQ cutover occurs at %zu rounds.\n", conn_id_, stream_id_,
+         arq_cutover);
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": Pure ARQ test, target %f arq_cutover %zu rtt %f owd %f.\n",
+         conn_id_, stream_id_, rel_.fec_target_pkt_del_time_sec, arq_cutover,
+         max_rtt_sec, max_ltr_owd_sec);
+#endif
+
+    // Pure ARQ can be used if there should be enough time to meet the packet
+    // delivery deadline time.
+    if (rel_.fec_target_pkt_del_time_sec >
+        (((static_cast<double>(arq_cutover) - 1.0) * max_rtt_sec) +
+         max_ltr_owd_sec))
+    {
 #ifdef SLIQ_DEBUG
       LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": FEC mode using pure ARQ lookup tables.\n", conn_id_,
-           stream_id_);
+           ": Pure ARQ will work, update N from %" PRIFecRound " to %zu, k "
+           "to 1.\n", conn_id_, stream_id_, fec_target_rounds_, arq_cutover);
 #endif
+
+      // Update the target number of rounds (N) to the pure ARQ cutover number
+      // of rounds, and the number of source packets per group (k) to 1 using
+      // the returned pure ARQ flag.
+      fec_target_rounds_         = arq_cutover;
+      fec_dss_ack_after_grp_cnt_ = 0;
+
+      ++stats_pkts_.fec_grp_pure_arq_2p_;
+
+      return true;
     }
-    else
-    {
-      // Use FEC with ARQ.  Find the PER and epsilon indices to use in the FEC
-      // midgame and endgame parameter arrays.
-      size_t  per_idx = (kNumPers - 1);
-
-      for (i = 0; i < kNumPers; ++i)
-      {
-        if (kPerVals[i] >= new_per)
-        {
-          per_idx = i;
-          break;
-        }
-      }
-
-      if (per_idx >= kNumPers)
-      {
-        per_idx = (kNumPers - 1);
-      }
-
-#ifdef SLIQ_DEBUG
-      LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
-           PRIStreamId ": Using PER %f in tables.\n", conn_id_, stream_id_,
-           kPerVals[per_idx]);
-#endif
-
-      size_t  eps_idx = (kNumEps - 1);
-
-      for (i = 0; i < kNumEps; ++i)
-      {
-        if (rel_.fec_target_pkt_recv_prob >= (1.0 - kEpsilon[i]))
-        {
-          eps_idx = i;
-          break;
-        }
-      }
-
-      if (eps_idx >= kNumEps)
-      {
-        eps_idx = (kNumEps - 1);
-      }
-
-#ifdef SLIQ_DEBUG
-      LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
-           PRIStreamId ": Using epsilon %f in tables.\n", conn_id_,
-           stream_id_, kEpsilon[eps_idx]);
-#endif
-
-      // Loop over all supported numbers of FEC source packets.
-      for (num_src = kMinK; num_src <= kMaxK; ++num_src)
-      {
-        // Lookup the midgame probability of packet receive given the number
-        // of FEC source packets, the PER index, the target number of rounds,
-        // and the epsilon (packet drop probability) index.
-        double  midgame_p_recv = kMidgameParms[num_src - 1][per_idx]
-          [fec_target_rounds_ - 1][eps_idx];
-
-        // A midgame_p_recv value of 0.0 signals that we should use an
-        // ARQ-like midgame lookup table.
-        if (midgame_p_recv < 0.001)
-        {
-          for (src_rcvd = 0; src_rcvd < num_src; ++src_rcvd)
-          {
-            for (enc_rcvd = 0; enc_rcvd < (num_src - src_rcvd); ++enc_rcvd)
-            {
-              idx = TABLE_OFFSET(num_src, src_rcvd, enc_rcvd);
-
-              fec_midgame_table_[idx] = (num_src - src_rcvd);
-            }
-          }
-
-#ifdef SLIQ_DEBUG
-          LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
-               PRIStreamId ": FEC mode using an ARQ-like midgame lookup "
-               "table for num_src %zu.\n", conn_id_, stream_id_, num_src);
-#endif
-        }
-        else
-        {
-          for (src_rcvd = 0; src_rcvd < num_src; ++src_rcvd)
-          {
-            for (enc_rcvd = 0; enc_rcvd < (num_src - src_rcvd); ++enc_rcvd)
-            {
-              idx = TABLE_OFFSET(num_src, src_rcvd, enc_rcvd);
-
-              CalculateConditionalSimpleFecDofToSend(
-                kMaxFecBlockLengthPkts, new_per, midgame_p_recv, num_src,
-                src_rcvd, enc_rcvd, fec_midgame_table_[idx]);
-            }
-          }
-
-#ifdef SLIQ_DEBUG
-          LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
-               PRIStreamId ": FEC mode using FEC and ARQ midgame lookup "
-               "table for num_src %zu.\n", conn_id_, stream_id_, num_src);
-#endif
-        }
-
-        // Lookup the endgame probability of packet receive given the PER
-        // index, the target number of rounds, and the epsilon (packet drop
-        // probability) index.
-        double  endgame_p_recv = kEndgameParms[num_src - 1][per_idx]
-          [fec_target_rounds_ - 1][eps_idx];
-
-        for (src_rcvd = 0; src_rcvd < num_src; ++src_rcvd)
-        {
-          for (enc_rcvd = 0; enc_rcvd < (num_src - src_rcvd); ++enc_rcvd)
-          {
-            idx = TABLE_OFFSET(num_src, src_rcvd, enc_rcvd);
-
-            CalculateConditionalSystematicFecDofToSend(
-              kMaxFecBlockLengthPkts, new_per, endgame_p_recv, num_src,
-              src_rcvd, enc_rcvd, fec_endgame_table_[idx]);
-          }
-        }
-
-#ifdef SLIQ_DEBUG
-        LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-             ": FEC mode using FEC and ARQ endgame lookup table for num_src "
-             "%zu.\n", conn_id_, stream_id_, num_src);
-#endif
-      } // num_src loop
-    } // mixed mode else
-
-    // Store the updated PER.
-    stats_per_ = new_per;
   }
+
+  // Third, check if pure FEC (N=1) or coded ARQ (N>1) can be used.  The test
+  // requires the maximum packet serialization time, which is computed using
+  // the maximum packet size and the current connection send rate estimate.
+  double  max_pst_sec   = 0.0;
+  double  send_rate_bps = conn_.StatsGetSendRate();
+
+  if (send_rate_bps > 0.0)
+  {
+    max_pst_sec = ((static_cast<double>(kPktOverheadBytes + kMaxPacketSize) *
+                    8.0) / send_rate_bps);
+  }
+
+#ifdef SLIQ_DEBUG
+  LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+       ": Pure FEC/Coded ARQ test, target %f rtt %f owd %f PER %f rate %f "
+       "pst %f.\n", conn_id_, stream_id_, rel_.fec_target_pkt_del_time_sec,
+       max_rtt_sec, max_ltr_owd_sec, kPerVals[fec_per_idx_], send_rate_bps,
+       max_pst_sec);
+#endif
+
+  // Find the target number of rounds (N) and number of source packets per
+  // group (k) that maximizes efficiency while keeping the total worst case
+  // delay within the packet delivery time limit.
+  FecRound  opt_n   = 0;
+  FecSize   opt_k   = 0;
+  uint8_t   opt_eff = 0;
+
+  for (FecRound n = kMinN; n <= kMaxN; ++n)
+  {
+    // Make sure the needed tables have been allocated.
+    if ((fec_midgame_tables_[n] == NULL) ||
+        (fec_endgame_tables_[n] == NULL))
+    {
+      LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+           ": Error, missing FEC lookup tables for n %" PRIFecRound ".\n",
+           conn_id_, stream_id_, n);
+      continue;
+    }
+
+    for (FecSize k = kMinK; k <= kMaxK; ++k)
+    {
+      // Compute the total worst-case delay.
+      size_t  idx        = TableOffset(fec_per_idx_, k, 0, 0);
+      double  mg_max_dof = fec_midgame_tables_[n][idx];
+      double  eg_max_dof = fec_endgame_tables_[n][idx];
+      double  twc_delay  =
+        (((n - 1) * (((mg_max_dof + 1.0) * max_pst_sec) + max_rtt_sec)) +
+         ((eg_max_dof * max_pst_sec) + max_ltr_owd_sec));
+
+      if (twc_delay <= rel_.fec_target_pkt_del_time_sec)
+      {
+        uint8_t  eff =
+          kEfficiency[fec_epsilon_idx_][fec_per_idx_][n - 1][k - 1];
+
+        if (eff > opt_eff)
+        {
+          opt_n   = n;
+          opt_k   = k;
+          opt_eff = eff;
+
+#ifdef SLIQ_DEBUG
+          LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
+               PRIStreamId ": Pure FEC/Coded ARQ candidate, eps=%f (idx %zu) "
+               "per=%f (idx %zu) N=%" PRIFecRound " k=%" PRIFecSize " eff=%"
+               PRIu8 " (%f) twcd %f target %f\n", conn_id_, stream_id_,
+               kEpsilon[fec_epsilon_idx_], fec_epsilon_idx_,
+               kPerVals[fec_per_idx_], fec_per_idx_, n, k, eff,
+               (static_cast<double>(eff) / 255.0), twc_delay,
+               rel_.fec_target_pkt_del_time_sec);
+#endif
+        }
+      }
+    }
+  }
+
+  // If there were no candidates found, then pure FEC (N=1) must be used with
+  // one source packets per group (k=1).
+  if (opt_n == 0)
+  {
+    opt_n = 1;
+    opt_k = 1;
+
+#ifdef SLIQ_DEBUG
+    LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": No candidates found, using pure FEC (N=1 k=1).\n", conn_id_,
+         stream_id_);
+#endif
+  }
+
+#ifdef SLIQ_DEBUG
+  LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+       ": %s will work, update N from %" PRIFecRound " to %" PRIFecRound
+       ", k from %" PRIFecSize " to %" PRIFecSize " (%s).\n", conn_id_,
+       stream_id_, ((opt_n == 1) ? "Pure FEC" : "Coded ARQ"),
+       fec_target_rounds_, opt_n, fec_dss_next_num_src_, opt_k,
+       ((opt_k <= fec_dss_next_num_src_) ? "yes" : "no"));
+#endif
+
+  if (opt_n == 1)
+  {
+    ++stats_pkts_.fec_grp_pure_fec_;
+  }
+  else
+  {
+    ++stats_pkts_.fec_grp_coded_arq_;
+  }
+
+  // Update the target number of rounds (N).
+  fec_target_rounds_ = opt_n;
+
+  // Update the number of source packets per group (k).  Make sure that the
+  // fec_dss_next_num_src_ value does not go up.
+  if (opt_k <= fec_dss_next_num_src_)
+  {
+    fec_dss_next_num_src_      = opt_k;
+    fec_dss_ack_after_grp_cnt_ = 0;
+  }
+
+  return false;
+}
+
+//============================================================================
+size_t SentPktManager::TableOffset(size_t per_idx, FecSize k, FecSize sr,
+                                   FecSize cr)
+{
+  static size_t  k_offset[11] = { 0, 0, 1, 4, 10, 20, 35, 56, 84, 120, 165 };
+  static size_t  sr_corr[10]  = { 0, 0, 1, 3, 6, 10, 15, 21, 28, 36 };
+
+  // Validate the parameters.
+  if ((per_idx >= kNumPers) || (k < kMinK) || (k > kMaxK) || (sr >= k) ||
+      (cr >= k) || ((sr + cr) >= k))
+  {
+    LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": Invalid FEC table index, per_idx=%zu k=%" PRIFecSize " sr=%"
+         PRIFecSize " cr=%" PRIFecSize ".\n", conn_id_, stream_id_, per_idx,
+         k, sr, cr);
+    return 0;
+  }
+
+  // Compute the offset into the array of elements.
+  size_t  offset = ((per_idx * kFecTriTableSize) + k_offset[k] +
+                    (static_cast<size_t>(sr) * static_cast<size_t>(k)) -
+                    sr_corr[sr] + static_cast<size_t>(cr));
+
+  if (offset >= kFecTableSize)
+  {
+    LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+         ": Invalid result, table[%zu][%" PRIFecSize "][%" PRIFecSize "][%"
+         PRIFecSize "] offset=%zu.\n", conn_id_, stream_id_, per_idx, k, sr,
+         cr, offset);
+    return 0;
+  }
+
+  return offset;
 }
 
 //============================================================================
 double SentPktManager::CalculateConditionalSimpleFecDofToSend(
-  int max_blk_len, double per, double tgt_p_recv, int num_src, int src_rcvd,
-  int enc_rcvd, int32_t& dof_to_send)
+  int max_grp_len, double per, double tgt_p_recv, int num_src, int src_rcvd,
+  int enc_rcvd, uint8_t& dof_to_send)
 {
   int  dof_needed = (num_src - (src_rcvd + enc_rcvd));
 
@@ -4626,7 +4969,7 @@ double SentPktManager::CalculateConditionalSimpleFecDofToSend(
   // Start at a test value for dof_to_send of 0.
   int  dts = 0;
 
-  for (dts = 1; dts < (max_blk_len - src_rcvd); ++dts)
+  for (dts = 1; dts < (max_grp_len - src_rcvd); ++dts)
   {
     ps = ComputeConditionalSimpleFecPs(num_src, src_rcvd, enc_rcvd, dts, per);
 
@@ -4652,8 +4995,8 @@ double SentPktManager::CalculateConditionalSimpleFecDofToSend(
 
 //============================================================================
 double SentPktManager::CalculateConditionalSystematicFecDofToSend(
-  int max_blk_len, double per, double tgt_p_recv, int num_src, int src_rcvd,
-  int enc_rcvd, int32_t& dof_to_send)
+  int max_grp_len, double per, double tgt_p_recv, int num_src, int src_rcvd,
+  int enc_rcvd, uint8_t& dof_to_send)
 {
   int  dof_needed = (num_src - (src_rcvd + enc_rcvd));
 
@@ -4674,7 +5017,7 @@ double SentPktManager::CalculateConditionalSystematicFecDofToSend(
   // Start at a test value for dof_to_send of 1.
   int  dts = 0;
 
-  for (dts = 1; dts < max_blk_len; ++dts)
+  for (dts = 1; dts < max_grp_len; ++dts)
   {
     ps = ComputeConditionalSystematicFecPs(num_src, src_rcvd, enc_rcvd, dts,
                                            per);
@@ -4875,7 +5218,7 @@ SentPktManager::SentPktInfo::SentPktInfo()
       last_xmit_time_(), pkt_len_(0), bytes_sent_(0), rexmit_limit_(0),
       rexmit_cnt_(0), cc_id_(0), flags_(0), sent_pkt_cnt_(0),
       prev_sent_pkt_cnt_(0), fec_grp_id_(0), fec_enc_pkt_len_(0),
-      fec_blk_idx_(0), fec_num_src_(0), fec_round_(0), fec_pkt_type_(0),
+      fec_grp_idx_(0), fec_num_src_(0), fec_round_(0), fec_pkt_type_(0),
       fec_ts_(0)
 {
 }
@@ -4915,7 +5258,7 @@ void SentPktManager::SentPktInfo::MoveFecInfo(SentPktInfo& spi)
   flags_           = spi.flags_;
   fec_grp_id_      = spi.fec_grp_id_;
   fec_enc_pkt_len_ = spi.fec_enc_pkt_len_;
-  fec_blk_idx_     = spi.fec_blk_idx_;
+  fec_grp_idx_     = spi.fec_grp_idx_;
   fec_num_src_     = spi.fec_num_src_;
   fec_round_       = spi.fec_round_;
   fec_pkt_type_    = spi.fec_pkt_type_;
@@ -4989,10 +5332,10 @@ bool SentPktManager::SentPktQueue::RemoveFromHead()
 //============================================================================
 SentPktManager::FecGroupInfo::FecGroupInfo()
     : fec_grp_id_(0), fec_num_src_(0), fec_num_enc_(0), fec_src_ack_cnt_(0),
-      fec_enc_ack_cnt_(0), fec_round_(0), fec_gen_enc_round_(0),
-      fec_src_to_send_icr_(0), fec_enc_to_send_icr_(0), fec_src_sent_icr_(0),
-      fec_enc_sent_icr_(0), fec_rexmit_limit_(0), latency_sensitive_(0),
-      force_end_(0), start_src_seq_num_(0), end_src_seq_num_(0),
+      fec_enc_ack_cnt_(0), fec_round_(0), fec_max_rounds_(0),
+      fec_gen_enc_round_(0), fec_src_to_send_icr_(0), fec_enc_to_send_icr_(0),
+      fec_src_sent_icr_(0), fec_enc_sent_icr_(0), fec_rexmit_limit_(0),
+      fec_flags_(0), start_src_seq_num_(0), end_src_seq_num_(0),
       start_enc_seq_num_(0), end_enc_seq_num_(0)
 {
 }
@@ -5028,7 +5371,8 @@ SentPktManager::VdmEncodeInfo::~VdmEncodeInfo()
 //============================================================================
 SentPktManager::PktCounts::PktCounts()
     : norm_sent_(0), norm_rx_sent_(0), fec_src_sent_(0), fec_src_rx_sent_(0),
-      fec_enc_sent_(0), fec_enc_rx_sent_(0)
+      fec_enc_sent_(0), fec_enc_rx_sent_(0), fec_grp_pure_fec_(0),
+      fec_grp_coded_arq_(0), fec_grp_pure_arq_1_(0), fec_grp_pure_arq_2p_(0)
 {
 }
 

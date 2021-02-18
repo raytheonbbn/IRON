@@ -240,7 +240,7 @@ void LinkStateTester::InitForTest(iron::BinMap& bin_map)
     }
   }
 
-  bpf_fwd_alg_->set_hysteresis(10);
+  bpf_dequeue_alg_->set_hysteresis(10);
 }
 
 //============================================================================
@@ -408,7 +408,8 @@ bool LinkStateTester::FindNextTransmissionTest(BinId& bin,
   memset(unused_solutions, 0, sizeof(unused_solutions));
   uint8_t num_solutions = 10;
   bool    result        =
-    this->bpf_fwd_alg_->FindNextTransmission(unused_solutions, num_solutions);
+    this->bpf_dequeue_alg_->FindNextTransmission(
+      unused_solutions, num_solutions);
 
   if (num_solutions > 0)
   {

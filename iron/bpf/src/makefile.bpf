@@ -130,6 +130,7 @@ EXE_NAME = bpf
 # Define source code associated with executable (e.g. EXESRC1.c EXESRC2.cc).
 #
 EXE_SOURCE = asap.cc \
+             backpressure_dequeue_alg.cc \
              backpressure_fwder.cc \
              backpressure_fwder_main.cc \
              bin_queue_mgr.cc \
@@ -144,7 +145,6 @@ EXE_SOURCE = asap.cc \
              queue_store.cc \
              sliq_cat.cc \
              sond.cc \
-             uber_fwd_alg.cc \
              zlr.cc
 
 #

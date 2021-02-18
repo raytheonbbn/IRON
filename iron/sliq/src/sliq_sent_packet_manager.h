@@ -35,25 +35,6 @@
  */
 /* IRON: end */
 
-//============================================================================
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-//============================================================================
-
 #ifndef IRON_SLIQ_SENT_PACKET_MANAGER_H_
 #define IRON_SLIQ_SENT_PACKET_MANAGER_H_
 
@@ -157,8 +138,10 @@ namespace sliq
     /// The rexmit_limit member of the rel argument is only used if the
     /// reliability mode is set to SEMI_RELIABLE_ARQ or SEMI_RELIABLE_ARQ_FEC.
     ///
-    /// The target_pkt_recv_prob and target_rounds members of the rel argument
-    /// are only used if the reliability mode is set to SEMI_RELIABLE_ARQ_FEC.
+    /// The fec_target_pkt_recv_prob, fec_del_time_flag,
+    /// fec_target_pkt_del_rounds, and fec_target_pkt_del_time_sec members of
+    /// the rel argument are only used if the reliability mode is set to
+    /// SEMI_RELIABLE_ARQ_FEC.
     ///
     /// \param  rel           The reliability settings for the stream.
     /// \param  init_seq_num  The initial sequence number that will be sent.
@@ -560,7 +543,7 @@ namespace sliq
     struct CcCntAdjInfo
     {
       CcCntAdjInfo();
-      ~CcCntAdjInfo();
+      virtual ~CcCntAdjInfo();
 
       /// A flag recording if the counts have been updated.
       bool     updated_;
@@ -579,7 +562,7 @@ namespace sliq
     struct CcUnaPktInfo
     {
       CcUnaPktInfo();
-      ~CcUnaPktInfo();
+      virtual ~CcUnaPktInfo();
 
       /// A flag recording if there is an oldest unacknowledged packet.
       bool          has_una_;
@@ -602,7 +585,7 @@ namespace sliq
     struct SentPktInfo
     {
       SentPktInfo();
-      ~SentPktInfo();
+      virtual ~SentPktInfo();
       void MoveFecInfo(SentPktInfo& spi);
       void Clear();
       static void SetPacketPool(iron::PacketPool* pool)
@@ -675,12 +658,12 @@ namespace sliq
       /// The FEC packet's encoded packet length.
       FecEncPktLen   fec_enc_pkt_len_;
 
-      /// The FEC packet's block index.
-      FecBlock       fec_blk_idx_;
+      /// The FEC packet's zero-based group index.
+      FecSize        fec_grp_idx_;
 
-      /// The FEC packet's number of FEC source packets in the block.  Only
-      /// set in FEC encoded packets.
-      FecBlock       fec_num_src_;
+      /// The FEC packet's number of FEC source packets in the FEC group.
+      /// Only set in FEC encoded packets.
+      FecSize        fec_num_src_;
 
       /// The FEC packet's round number.
       FecRound       fec_round_;
@@ -696,7 +679,7 @@ namespace sliq
     struct SentPktQueue
     {
       SentPktQueue();
-      ~SentPktQueue();
+      virtual ~SentPktQueue();
       bool Init(WindowSize max_size);
       bool AddToTail();
       bool RemoveFromHead();
@@ -739,56 +722,56 @@ namespace sliq
     struct FecGroupInfo
     {
       FecGroupInfo();
-      ~FecGroupInfo();
+      virtual ~FecGroupInfo();
 
       /// The FEC group ID.
       FecGroupId    fec_grp_id_;
 
       /// The number of FEC source packets in the FEC group.
-      FecBlock      fec_num_src_;
+      FecSize       fec_num_src_;
 
       /// The number of FEC encoded packets in the FEC group.  Set to 0 when
       /// the number is not known yet.
-      FecBlock      fec_num_enc_;
+      FecSize       fec_num_enc_;
 
       /// The number of FEC source packets ACKed in the FEC group.
-      FecBlock      fec_src_ack_cnt_;
+      FecSize       fec_src_ack_cnt_;
 
       /// The number of FEC encoded packets ACKed in the FEC group.
-      FecBlock      fec_enc_ack_cnt_;
+      FecSize       fec_enc_ack_cnt_;
 
       /// The number identifying the current FEC transmission round.  The
       /// first round (sending original FEC source packets) is round 1.
       FecRound      fec_round_;
+
+      /// The maximum number of transmission rounds for the FEC group.
+      FecRound      fec_max_rounds_;
 
       /// The FEC round when the FEC encoded packets were first generated.
       FecRound      fec_gen_enc_round_;
 
       /// The number of FEC source packet transmissions and retransmissions
       /// allowed in the current round.
-      FecBlock      fec_src_to_send_icr_;
+      FecSize       fec_src_to_send_icr_;
 
       /// The number of FEC encoded packet transmissions and retransmissions
       /// allowed in the current round.
-      FecBlock      fec_enc_to_send_icr_;
+      FecSize       fec_enc_to_send_icr_;
 
       /// The number of FEC source packet transmissions and retransmissions
       /// that have occurred in the current round.
-      FecBlock      fec_src_sent_icr_;
+      FecSize       fec_src_sent_icr_;
 
       /// The number of FEC encoded packet transmissions and retransmissions
       /// that have occurred in the current round.
-      FecBlock      fec_enc_sent_icr_;
+      FecSize       fec_enc_sent_icr_;
 
       /// The retransmission limit for all FEC source and encoded packets in
       /// the group.
       RetransCount  fec_rexmit_limit_;
 
-      /// The latency-sensitive flag for source data packets in the group.
-      uint8_t       latency_sensitive_;
-
-      /// The force end flag for the group.
-      uint8_t       force_end_;
+      /// The FEC group's flags: pure ARQ, latency sensitive, and force end.
+      uint8_t       fec_flags_;
 
       /// The sequence number of the first FEC source packet in the group.
       PktSeqNumber  start_src_seq_num_;
@@ -807,7 +790,7 @@ namespace sliq
     struct FecEndOfRndInfo
     {
       FecEndOfRndInfo();
-      ~FecEndOfRndInfo();
+      virtual ~FecEndOfRndInfo();
 
       /// The data packet timestamp, in microseconds, marking the end of the
       /// FEC group round.
@@ -825,7 +808,7 @@ namespace sliq
     struct VdmEncodeInfo
     {
       VdmEncodeInfo();
-      ~VdmEncodeInfo();
+      virtual ~VdmEncodeInfo();
 
       /// The number of FEC source data packets.
       int       num_src_pkt_;
@@ -850,7 +833,7 @@ namespace sliq
     struct PktCounts
     {
       PktCounts();
-      ~PktCounts();
+      virtual ~PktCounts();
 
       /// The number of normal (non-FEC) packets transmitted.
       size_t  norm_sent_;
@@ -869,6 +852,18 @@ namespace sliq
 
       /// The number of FEC encoded packets retransmitted.
       size_t  fec_enc_rx_sent_;
+
+      /// The number of FEC groups sent that use pure FEC.
+      size_t  fec_grp_pure_fec_;
+
+      /// The number of FEC groups sent that use coded ARQ.
+      size_t  fec_grp_coded_arq_;
+
+      /// The number of FEC groups sent that use pure ARQ mode with N=1.
+      size_t  fec_grp_pure_arq_1_;
+
+      /// The number of FEC groups sent that use pure ARQ mode with N=2+.
+      size_t  fec_grp_pure_arq_2p_;
     };
 
     /// \brief Copy constructor.
@@ -1070,8 +1065,8 @@ namespace sliq
     ///          otherwise.
     bool GenerateFecEncodedPkts(PktSeqNumber start_src_seq_num,
                                 PktSeqNumber end_src_seq_num,
-                                FecGroupId grp_id, FecBlock n, FecBlock k,
-                                FecBlock enc_offset, FecBlock enc_cnt,
+                                FecGroupId grp_id, FecSize n, FecSize k,
+                                FecSize enc_offset, FecSize enc_cnt,
                                 SentPktQueue& fec_enc_q, bool addl_flag);
 
     /// \brief Get the current FEC group round number for a packet
@@ -1091,15 +1086,6 @@ namespace sliq
     ///          being sent, or false if there are no more rounds.
     bool PrepareNextFecRound(FecGroupInfo& grp_info);
 
-    /// \brief Get the maximum number of FEC source packets that can be sent
-    /// given a maximum degree-of-freedom (DOF).
-    ///
-    /// \param  max_dof  The maximum DOF value.
-    ///
-    /// \return  The maximum number of FEC source packets than can be sent in
-    ///          an FEC group without exceeding the specified maximum DOF.
-    FecBlock GetMaxFecSrcPkts(int32_t max_dof);
-
     /// \brief Record the end of an FEC round to be watched for when ACK
     /// packets are processed.
     ///
@@ -1117,29 +1103,54 @@ namespace sliq
     /// \param  obs_ts   The received ACK header's observed packet timestamp.
     void ProcessEndOfFecRounds(PktSeqNumber seq_num, PktTimestamp obs_ts);
 
-    /// \brief Update the local state to start the next FEC block.
-    void StartNextFecBlock();
+    /// \brief Update the local state to start the next FEC group.
+    void StartNextFecGroup();
 
-    /// \brief Update the FEC lookup tables.
+    /// \brief Create the FEC lookup tables.
     ///
     /// \author Steve Zabele
     ///
-    /// \param  force_update  A flag that forces the FEC tables to be updated
-    ///                       regardless of the PER.  Defaults to false.
+    /// \return  True if the tables are created successfully, or false on
+    ///          error.
+    bool CreateFecTables();
+
+    /// \brief Allocate the memory for the FEC midgame and endgame lookup
+    /// tables for the specified target number of rounds.
     ///
-    /// Obtains the latest packet error rate (PER) estimate and updates both
-    /// FEC lookup tables (midgame and endgame) if the PER has changed.
-    void UpdateFecTables(bool force_update = false);
+    /// \param  n  The target number of rounds.
+    ///
+    /// \return  True if the tables are allocated successfully, or false on
+    ///          error.
+    bool AllocateFecTables(FecRound n);
+
+    /// \brief Update the FEC lookup table parameters.
+    ///
+    /// Updates the packet error rate (PER), target number of rounds (N), and
+    /// number of source packets per group (k).  Called before the start of a
+    /// new FEC group.
+    ///
+    /// \return  True if pure ARQ mode is to be used, or false otherwise.
+    bool UpdateFecTableParams();
+
+    /// \brief Get the 4D FEC lookup table index.
+    ///
+    /// \param  per_idx  The PER index.
+    /// \param  k        The number of source packets per group.
+    /// \param  sr       The number of source packets received.
+    /// \param  cr       The number of coded packets received.
+    ///
+    /// \return  The index.
+    size_t TableOffset(size_t per_idx, FecSize k, FecSize sr, FecSize cr);
 
     /// \brief Calculates the number of required packets to retransmit given
     /// the input parameters.
     ///
     /// \author Steve Zabele
     ///
-    /// \param  max_blk_len  The maximum FEC block length in packets.
+    /// \param  max_grp_len  The maximum FEC group length in packets.
     /// \param  per          The packet error rate.
     /// \param  tgt_p_recv   The target packet receive probability.
-    /// \param  num_src      The number of source packets in the FEC block.
+    /// \param  num_src      The number of source packets in the FEC group.
     /// \param  src_rcvd     The number of source packets already received.
     /// \param  enc_rcvd     The number of encoded packets already received.
     /// \param  dof_to_send  A reference to where the degrees of freedom to
@@ -1147,18 +1158,18 @@ namespace sliq
     ///
     /// \return  The probability of success.
     double CalculateConditionalSimpleFecDofToSend(
-      int max_blk_len, double per, double tgt_p_recv, int num_src,
-      int src_rcvd, int enc_rcvd, int32_t& dof_to_send);
+      int max_grp_len, double per, double tgt_p_recv, int num_src,
+      int src_rcvd, int enc_rcvd, uint8_t& dof_to_send);
 
     /// \brief Calculates the number of required packets to retransmit given
     /// the input parameters.
     ///
     /// \author Steve Zabele
     ///
-    /// \param  max_blk_len  The maximum FEC block length in packets.
+    /// \param  max_grp_len  The maximum FEC group length in packets.
     /// \param  per          The packet error rate.
     /// \param  tgt_p_recv   The target packet receive probability.
-    /// \param  num_src      The number of source packets in the FEC block.
+    /// \param  num_src      The number of source packets in the FEC group.
     /// \param  src_rcvd     The number of source packets already received.
     /// \param  enc_rcvd     The number of encoded packets already received.
     /// \param  dof_to_send  A reference to where the degrees of freedom to
@@ -1166,18 +1177,18 @@ namespace sliq
     ///
     /// \return  The probability of success.
     double CalculateConditionalSystematicFecDofToSend(
-      int max_blk_len, double per, double tgt_p_recv, int num_src,
-      int src_rcvd, int enc_rcvd, int32_t& dof_to_send);
+      int max_grp_len, double per, double tgt_p_recv, int num_src,
+      int src_rcvd, int enc_rcvd, uint8_t& dof_to_send);
 
     /// \brief Computes the probability of receiving a packet, given other
-    /// packets in the FEC block have been received.
+    /// packets in the FEC group have been received.
     ///
     /// \author Steve Zabele
     ///
     /// This method models a simple code, where at least num_src packets must
     /// be received to have usable source packets.
     ///
-    /// \param  num_src      The number of source packets in the FEC block.
+    /// \param  num_src      The number of source packets in the FEC group.
     /// \param  src_rcvd     The number of source packets already received.
     /// \param  enc_rcvd     The number of encoded packets already received.
     /// \param  dof_to_send  The number of packets to be transmitted.
@@ -1188,14 +1199,14 @@ namespace sliq
       int num_src, int src_rcvd, int enc_rcvd, int dof_to_send, double per);
 
     /// \brief Computes the probability of receiving a packet, given other
-    /// packets in the FEC block have been received.
+    /// packets in the FEC group have been received.
     ///
     /// \author Steve Zabele
     ///
     /// This method models a systematic code, where there is usable source
     /// packets even if enough packets are not received to decode the FEC.
     ///
-    /// \param  num_src      The number of source packets in the FEC block.
+    /// \param  num_src      The number of source packets in the FEC group.
     /// \param  src_rcvd     The number of source packets already received.
     /// \param  enc_rcvd     The number of encoded packets already received.
     /// \param  dof_to_send  The number of packets to be transmitted.
@@ -1218,6 +1229,11 @@ namespace sliq
     ///
     /// \return  The k-combination of n as a double.
     double Combination(int n, int k);
+
+    /// The number of lookup tables, indexed directly by the target number of
+    /// rounds (N).  The valid range is 1 to kMaxTgtPktDelRnds.  The entry
+    /// for index 0 is not used.
+    static const size_t  kNumLookupTables = (sliq::kMaxTgtPktDelRnds + 1);
 
     /// The SLIQ connection.
     Connection&        conn_;
@@ -1280,9 +1296,6 @@ namespace sliq
     /// (both data header and payload sizes).
     ssize_t            stats_bytes_in_flight_;
 
-    /// The latest packet error rate (PER) for the connection.
-    double             stats_per_;
-
     /// The amount of time allowed for sending the source packets in each FEC
     /// group, in seconds.
     double             stats_fec_src_dur_sec_;
@@ -1290,40 +1303,42 @@ namespace sliq
     /// The packet inter-send time estimate, in seconds.
     double             stats_pkt_ist_;
 
+    /// The latest packet error rate (PER) for the connection.
+    double             fec_per_;
+
+    /// The index for the current packet error rate (PER).
+    size_t             fec_per_idx_;
+
+    /// The index for the Epsilon value (target loss probability).
+    size_t             fec_epsilon_idx_;
+
     /// The target number of FEC rounds.
     FecRound           fec_target_rounds_;
 
-    /// The current FEC block index.
-    FecBlock           fec_blk_idx_;
+    /// The current FEC group index.
+    FecSize            fec_grp_idx_;
 
-    /// The current FEC group ID for the block of packets.
-    FecGroupId         fec_grp_;
+    /// The current FEC group ID for the group of packets.
+    FecGroupId         fec_grp_id_;
 
     /// The total number of FEC packets in the current FEC group.
-    FecBlock           fec_total_pkts_;
-
-    /// The FEC dynamic source size initialization flag.
-    bool               fec_dss_init_flag_;
+    FecSize            fec_total_pkts_;
 
     /// The FEC dynamic source size value for the number of FEC source packets
-    /// to use in the next FEC group.
-    FecBlock           fec_dss_next_num_src_;
-
-    /// The FEC dynamic source size value for the number of FEC packets sent
-    /// in an FEC group before receiving an ACK for the group.
-    FecBlock           fec_dss_pkts_before_ack_;
+    /// to use in the next FEC group.  Not used when in pure ARQ mode.
+    FecSize            fec_dss_next_num_src_;
 
     /// The FEC dynamic source size value for the number of FEC groups
     /// completely sent before receiving an ACK for the group.
-    FecBlock           fec_dss_ack_after_grp_cnt_;
+    FecSize            fec_dss_ack_after_grp_cnt_;
 
-    /// The FEC mid-game lookup table.  The index into the 3D table must come
-    /// from TableOffset().
-    int32_t*           fec_midgame_table_;
+    /// The FEC mid-game lookup tables, indexed by the number of rounds (N).
+    /// Each entry points to a 4D table that is indexed used TableOffset().
+    uint8_t*           fec_midgame_tables_[kNumLookupTables];
 
-    /// The FEC end-game lookup table.  The index into the 3D table must come
-    /// from TableOffset().
-    int32_t*           fec_endgame_table_;
+    /// The FEC end-game lookup tables, indexed by the number of rounds (N).
+    /// Each entry points to a 4D table that is indexed used TableOffset().
+    uint8_t*           fec_endgame_tables_[kNumLookupTables];
 
     /// The circular array of FEC group information indexed by group ID.
     FecGroupInfo*      fec_grp_info_;

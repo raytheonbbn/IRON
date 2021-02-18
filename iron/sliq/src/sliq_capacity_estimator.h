@@ -188,7 +188,7 @@ namespace sliq
     ///                            bytes.  Only used if the congestion control
     ///                            algorithm was configured with use_cwnd set
     ///                            to true.
-    /// \param  rate_est_bps       The current congestion control rate
+    /// \param  rate_est_bps       The current congestion control send rate
     ///                            estimate, in bits per second.  Only used if
     ///                            the congestion control algorithm was
     ///                            configured with use_cwnd set to false.
@@ -221,7 +221,7 @@ namespace sliq
     struct CwndRate
     {
       CwndRate();
-      ~CwndRate();
+      virtual ~CwndRate();
 
       /// The congestion window size for the rates in bytes.
       size_t  cwnd_size_;
@@ -244,7 +244,7 @@ namespace sliq
     struct CcState
     {
       CcState();
-      ~CcState();
+      virtual ~CcState();
 
       /// The flag recording if the algorithm has been initialized.
       bool        init_;

@@ -119,6 +119,7 @@ namespace iron
   /// - PathController.x.EfDataRel
   /// - PathController.x.CongCtrl
   /// - PathController.x.Aggr
+  /// - PathController.x.RttOutRej
   /// - PathController.x.AntiJitter
   /// - PathController.x.ActiveCapEst
   ///
@@ -137,33 +138,44 @@ namespace iron
   ///               which is the server (the higher IP address will be the\n
   ///               server).  The port numbers default to 30300.  Required.
   /// - EfDataRel : The optional reliability mode for expedited forwarding\n
-  ///               data packets.  May be: "ARQ" (semi-reliable ARQ), or\n
+  ///               data packets.  May be "ARQ" (semi-reliable ARQ), or\n
   ///               "ARQFEC(<l>,<p>)" (semi-reliable ARQ and FEC).  For\n
   ///               ARQFEC, "<p>" is the target packet delivery probability\n
-  ///               for delivering the packets within the time limit "<l>".\n
-  ///               Note that "<l>" must be specified as a floating point\n
-  ///               number in seconds, and "<p>" must be specified as a\n
-  ///               floating point probability between 0.5 and 0.999\n
-  ///               (inclusive).  Defaults to "ARQ".
+  ///               for delivering the packets within the limit "<l>".  The\n
+  ///               limit "<l>" may be a floating point time in seconds or\n
+  ///               an integer number of rounds.  To determine which limit\n
+  ///               type is being specified, a time must have an "s" at the\n
+  ///               end (short for "seconds").  Note that "<p>" must be\n
+  ///               specified as a floating point number between 0.95 and\n
+  ///               0.999 (inclusive), while "<l>" must be either a time in\n
+  ///               seconds between "0.001s" and "64.0s" (inclusive) or a\n
+  ///               number of rounds between "1" and "7" (inclusive).\n
+  ///               Defaults to "ARQ".
   /// - CongCtrl  : The optional congestion control algorithms to use,\n
   ///               separated by commas.  Only the client side sets the
   ///               congestion control algorithms for both ends of the
   ///               connection.  May be:\n
   ///               "Cubic" (TCP's CUBIC using Bytes with Pacing),\n
-  ///               "CopaM" (Copa, Maximize Throughput),\n
-  ///               "DetCopaM" (Deterministic Copa, Maximize Throughput),\n
-  ///               "Copa_<delta>" (Copa, Constant Delta),\n
-  ///               "DetCopa_<delta>" (Deterministic Copa, Constant Delta),\n
-  ///               "Copa2" (Copa2),\n
-  ///               "Copa3" (Copa3), or\n
+  ///               "Copa" (Copa),\n
+  ///               "CopaBeta2" (Copa Beta 2),\n
+  ///               "CopaBeta1M" (Copa Beta 1, Maximize Throughput),\n
+  ///               "DetCopaBeta1M" (Deterministic Copa Beta 1, Maximize\n
+  ///                 Throughput),\n
+  ///               "CopaBeta1_<delta>" (Copa Beta 1, Constant Delta),\n
+  ///               "DetCopaBeta1_<delta>" (Deterministic Copa Beta 1,\n
+  ///                 Constant Delta), or\n
   ///               "FixedRate_<bps>" (Fixed Send Rate, For Testing Only).\n
   ///               Note that "<delta>" must be a floating-point number in\n
   ///               the range 0.004 to 1.0 inclusive.  Defaults to\n
-  ///               "Cubic,Copa3".
+  ///               "Cubic,Copa".
   /// - Aggr      : The optional congestion control algorithm aggressiveness\n
   ///               factor in number of TCP flows.  Must be an integer\n
   ///               >= 1.  Defaults to 1.
-  /// - AntiJitter : The optional Copa3 congestion control algorithm\n
+  /// - RttOutRej : The optional RTT outlier rejection setting.  When\n
+  ///               enabled, all RTT samples are passed through a median\n
+  ///               filter to eliminate those from the maximum RTT estimate.\n
+  ///               Defaults to false (disabled).
+  /// - AntiJitter : The optional Copa congestion control algorithm\n
   ///               anti-jitter value in seconds.  Must be between 0.0 and\n
   ///               1.0.  Defaults to 0.0 (disabled).
   /// - ActiveCapEst : The optional active capacity estimation setting.\n
@@ -494,7 +506,7 @@ namespace iron
     /// \brief Parse the congestion control string.
     ///
     /// \param  cc_alg_str   A reference to the string to be parsed.
-    /// \param  anti_jitter  The Copa3 anti-jitter value in seconds.
+    /// \param  anti_jitter  The Copa anti-jitter value in seconds.
     ///
     /// \return  True if the string is parsed successfully, or false
     ///          otherwise.
@@ -634,6 +646,9 @@ namespace iron
 
     /// The SLIQ congestion control algorithm aggressiveness setting.
     uint32_t             cc_aggr_;
+
+    /// The SLIQ RTT outlier rejection setting.
+    bool                 rtt_outlier_rejection_;
 
     /// The data packet transmit queue size in packets.  Used for both the EF
     /// data and non-EF data streams.

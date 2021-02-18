@@ -35,22 +35,6 @@
  * SOFTWARE.
  */
 /* IRON: end */
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 //============================================================================
 
 #ifndef IRON_SLIQ_FRAMER_H
@@ -158,6 +142,7 @@ namespace sliq
     ACK_HEADER                  = 33,  // 0x21
     CC_SYNC_HEADER              = 34,  // 0x22
     RCVD_PKT_CNT_HEADER         = 35,  // 0x23
+    CONN_MEAS_HEADER            = 36,  // 0x24
 
     // Specialized stand-alone headers.  Cannot be concatenated.
     CC_PKT_TRAIN_HEADER         = 40,  // 0x28
@@ -201,7 +186,7 @@ namespace sliq
   ///     Congestion Control Algorithm Type (1 byte)
   ///     Flags (1 byte) (uuuuuudp)
   ///       uuuuuu - Unused (6 bits)
-  ///       d      - Deterministic, Copa Only (1 bit)
+  ///       d      - Deterministic, Copa Beta 1 Only (1 bit)
   ///       p      - Pacing, Cubic/Reno Only (1 bit)
   ///     Unused (2 bytes)
   ///     Congestion Control Parameters (4 bytes)
@@ -210,13 +195,13 @@ namespace sliq
   ///
   /// Length = 16 bytes + (num_cc_alg * 8 bytes).
   ///
-  /// Packets with this header use specialized reliability and
-  /// retransmission rules.
+  /// This header uses specialized reliability and retransmission rules.
   struct ConnHndshkHeader
   {
     ConnHndshkHeader();
     ConnHndshkHeader(uint8_t num_alg, MsgTag tag, PktTimestamp ts,
                      PktTimestamp echo_ts, ClientId id, CongCtrl* alg);
+    virtual ~ConnHndshkHeader() {}
     size_t ConvertToCongCtrl(CongCtrl* alg, size_t max_alg);
 
     uint8_t       num_cc_algs;
@@ -251,11 +236,12 @@ namespace sliq
   ///
   /// Length = 4 bytes.
   ///
-  /// Packets with this header are best effort.
+  /// This header is best effort.
   struct ResetConnHeader
   {
     ResetConnHeader();
     ResetConnHeader(ConnErrorCode error);
+    virtual ~ResetConnHeader() {}
 
     ConnErrorCode  error_code;
   };
@@ -278,12 +264,12 @@ namespace sliq
   ///
   /// Length = 4 bytes.
   ///
-  /// Packets with this header use specialized reliability and retransmission
-  /// rules.
+  /// This header uses specialized reliability and retransmission rules.
   struct CloseConnHeader
   {
     CloseConnHeader();
     CloseConnHeader(bool ack, ConnCloseCode reason);
+    virtual ~CloseConnHeader() {}
 
     bool           ack_flag;
     ConnCloseCode  reason_code;
@@ -326,8 +312,7 @@ namespace sliq
   ///
   /// Length = 20 bytes.
   ///
-  /// Packets with this header use specialized reliability and retransmission
-  /// rules.
+  /// This header uses specialized reliability and retransmission rules.
   struct CreateStreamHeader
   {
     CreateStreamHeader();
@@ -336,6 +321,7 @@ namespace sliq
                        DeliveryMode del_mode, ReliabilityMode rel_mode,
                        RexmitLimit limit, RexmitRounds del_rnds,
                        double del_time, double recv_p);
+    virtual ~CreateStreamHeader() {}
     void GetReliability(Reliability& rel);
 
     bool             del_time_flag;
@@ -373,12 +359,13 @@ namespace sliq
   ///
   /// Length = 8 bytes.
   ///
-  /// Packets with this header are best effort.
+  /// This header is best effort.
   struct ResetStreamHeader
   {
     ResetStreamHeader();
     ResetStreamHeader(StreamId sid, StreamErrorCode error,
                       PktSeqNumber seq_num);
+    virtual ~ResetStreamHeader() {}
 
     StreamId         stream_id;
     StreamErrorCode  error_code;
@@ -449,7 +436,7 @@ namespace sliq
   ///       0 = Original Packet (aka Source Data Packet)
   ///       1 = FEC Packet (aka Encoded Data Packet)
   ///     Unused (1 bit)
-  ///     Block Index in FEC Group, 0-63 (6 bits)
+  ///     Group Index within the FEC Group, 0-63 (6 bits)
   ///     Number of FEC Source Packets in FEC Group, 0-15 (4 bits)
   ///       Must be 0 if (FEC Packet Type == 0)
   ///     Round Number in FEC Group, 0-15 (4 bits)
@@ -473,21 +460,23 @@ namespace sliq
   /// Length = 20 bytes + (m_bit * 4 bytes) + (e_bit * 4 bytes) +
   ///          (l_bit * 2 bytes) + (num_ttg * 2 bytes) + payload_len_bytes.
   ///
-  /// Packets with this header are reliable via the ACK header and/or FEC.
+  /// This header, plus any payload, is reliable via the ACK header and/or
+  /// FEC.
   ///
   /// This header may be concatenated with ACK, Congestion Control
-  /// Synchronization, and Received Packet Count headers into a single UDP
-  /// packet, but only one Data header may be included and the Data header
-  /// (plus any payload) must come last.
+  /// Synchronization, Received Packet Count, and Connection Measurement
+  /// headers into a single UDP packet, but only one Data header may be
+  /// included and the Data header (plus any payload) must come last.
   struct DataHeader
   {
     DataHeader();
     DataHeader(bool epl, bool fec, bool move_fwd, bool persist, bool fin,
                StreamId sid, TtgCount ttgs, CcId id, RetransCount rx_cnt,
                PktSeqNumber seq_num, PktTimestamp ts, PktTimestamp ts_delta,
-               PktSeqNumber mf_seq_num, FecPktType fec_type, FecBlock fec_idx,
-               FecBlock fec_src, FecRound fec_rnd, FecGroupId fec_grp,
+               PktSeqNumber mf_seq_num, FecPktType fec_type, FecSize fec_idx,
+               FecSize fec_src, FecRound fec_rnd, FecGroupId fec_grp,
                FecEncPktLen enc_pkt_len);
+    virtual ~DataHeader() {}
 
     bool              enc_pkt_len_flag;
     bool              fec_flag;
@@ -503,8 +492,8 @@ namespace sliq
     PktTimestamp      timestamp_delta;
     PktSeqNumber      move_fwd_seq_num;
     FecPktType        fec_pkt_type;
-    FecBlock          fec_block_index;
-    FecBlock          fec_num_src;
+    FecSize           fec_group_index;
+    FecSize           fec_num_src;
     FecRound          fec_round;
     FecGroupId        fec_group_id;
     FecEncPktLen      encoded_pkt_length;
@@ -589,16 +578,17 @@ namespace sliq
   ///
   /// Length = 16 bytes + (num_times * 8 bytes) + (num_blocks * 2 bytes).
   ///
-  /// Packets with this header are best effort.
+  /// This header is best effort.
   ///
   /// This header may be concatenated with Data, Congestion Control
-  /// Synchronization, and Received Packet Count headers into a single UDP
-  /// packet.
+  /// Synchronization, Received Packet Count, and Connection Measurement
+  /// headers into a single UDP packet.
   struct AckHeader
   {
     AckHeader();
     AckHeader(StreamId sid, PktSeqNumber ne_seq, PktTimestamp ts,
               PktTimestamp ts_delta);
+    virtual ~AckHeader() {}
 
     StreamId      stream_id;
     uint8_t       num_observed_times;
@@ -639,14 +629,15 @@ namespace sliq
   ///
   /// Length = 8 bytes.
   ///
-  /// Packets with this header are best effort.
+  /// This header is best effort.
   ///
-  /// This header may be concatenated with Data, ACK, and Received Packet
-  /// Count headers into a single UDP packet.
+  /// This header may be concatenated with Data, ACK, Received Packet Count,
+  /// and Connection Measurement headers into a single UDP packet.
   struct CcSyncHeader
   {
     CcSyncHeader();
     CcSyncHeader(CcId id, uint16_t sn, uint32_t params);
+    virtual ~CcSyncHeader() {}
 
     CcId      cc_id;
     uint16_t  seq_num;
@@ -677,20 +668,64 @@ namespace sliq
   ///
   /// Length = 12 bytes.
   ///
-  /// Packets with this header are best effort.
+  /// This header is best effort.
   ///
-  /// This header may be concatenated with Data, ACK, and Congestion Control
-  /// Synchronization headers into a single UDP packet.
+  /// This header may be concatenated with Data, ACK, Congestion Control
+  /// Synchronization, and Connection Measurement headers into a single UDP
+  /// packet.
   struct RcvdPktCntHeader
   {
     RcvdPktCntHeader();
     RcvdPktCntHeader(StreamId sid, RetransCount rexmit_cnt,
                      PktSeqNumber seq_num, PktCount cnt);
+    virtual ~RcvdPktCntHeader() {}
 
     StreamId      stream_id;
     RetransCount  retransmission_count;
     PktSeqNumber  sequence_number;
     PktCount      rcvd_data_pkt_count;
+  };
+
+  /// The SLIQ connection measurement header.
+  ///
+  /// \verbatim
+  ///  0                   1                   2                   3
+  ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  /// |     Type      |O|   Unused    |        Sequence Number        |
+  /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  /// |            Maximum Remote-To-Local One-Way Delay*             |
+  /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  ///
+  /// Optional fields are denoted with (*).  Optional fields that are present
+  /// must appear in the order listed above.
+  ///
+  ///   Header Type (1 byte) (0x24)
+  ///   Flags (1 byte) (ouuuuuuu)
+  ///     o       - Maximum Remote-To-Local One-Way Delay Present (1 bit)
+  ///     uuuuuuu - Unused (7 bits)
+  ///   Sequence Number (2 bytes)
+  ///
+  ///   Present if (Maximum Remote-To-Local One-Way Delay Present == 1):
+  ///     Maximum Remote-To-Local One-Way Delay in Microseconds (4 bytes)
+  /// \endverbatim
+  ///
+  /// Length = 4 bytes + (o_bit * 4 bytes).
+  ///
+  /// This header is best effort.
+  ///
+  /// This header may be concatenated with Data, ACK, Congestion Control
+  /// Synchronization, and Received Packet Count headers into a single UDP
+  /// packet.
+  struct ConnMeasHeader
+  {
+    ConnMeasHeader();
+    ConnMeasHeader(bool owd, uint16_t sn, uint32_t max_owd);
+    virtual ~ConnMeasHeader() {}
+
+    bool      owd_flag;
+    uint16_t  sequence_number;
+    uint32_t  max_rmt_to_loc_owd;
   };
 
   /// The SLIQ congestion control packet train header.
@@ -725,12 +760,13 @@ namespace sliq
   ///
   /// Length = 16 bytes + payload.
   ///
-  /// Packets with this header are best effort.
+  /// This header is best effort.
   struct CcPktTrainHeader
   {
     CcPktTrainHeader();
     CcPktTrainHeader(CcId id, uint8_t type, uint8_t seq, uint32_t irt,
                      PktTimestamp ts, PktTimestamp ts_delta);
+    virtual ~CcPktTrainHeader() {}
 
     CcId          cc_id;
     uint8_t       pt_pkt_type;
@@ -838,6 +874,18 @@ namespace sliq
     /// \return  True on success, or false otherwise.
     bool AppendRcvdPktCntHeader(iron::Packet*& packet,
                                 const RcvdPktCntHeader& input);
+
+    /// \brief Append a SLIQ connection measurement header.
+    ///
+    /// \param  packet  A reference to a pointer to the packet where the
+    ///                 received packet count header will be appended.  If
+    ///                 NULL, then a packet will be generated and placed in
+    ///                 this pointer.
+    /// \param  input   The header input data.
+    ///
+    /// \return  True on success, or false otherwise.
+    bool AppendConnMeasHeader(iron::Packet*& packet,
+                              const ConnMeasHeader& input);
 
     /// \brief Generate a SLIQ packet with a congestion control packet train
     /// header followed by a payload of the specified length.
@@ -966,6 +1014,18 @@ namespace sliq
     ///          otherwise.
     bool ParseRcvdPktCntHeader(const iron::Packet* packet, size_t& offset,
                                RcvdPktCntHeader& output);
+
+    /// \brief Parse a received connection measurement header.
+    ///
+    /// \param  packet  The packet that is being parsed.
+    /// \param  offset  The byte offset into the packet where the received
+    ///                 connection measurement header begins.
+    /// \param  output  The parsed header.
+    ///
+    /// \return  True if the header is parsed successfully, or false
+    ///          otherwise.
+    bool ParseConnMeasHeader(const iron::Packet* packet, size_t& offset,
+                             ConnMeasHeader& output);
 
     /// \brief Parse a SLIQ congestion control packet train header.
     ///

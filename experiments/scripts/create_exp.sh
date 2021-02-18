@@ -360,7 +360,11 @@ gen_lem_templates() {
 	for NBR in ${NBRS[*]}; do
 	    ENC_NODE_STR="-h \$enclave${ENC}_le1_node\$"
 	    LEM_STR='${LEC_BIN} '"${ENC_NODE_STR} -P ${NBR}"
-	    LEM_STR="${LEM_STR} -s \$enclave${NBR}_iron_wan1_addr\$/32"
+	    if [ ${DUAL_HOME} -eq 1 ]; then
+		LEM_STR="${LEM_STR} -s \$enclave${NBR}_iron_wan1_addr\$/24"
+	    else
+		LEM_STR="${LEM_STR} -s \$enclave${NBR}_iron_wan1_addr\$/16"
+	    fi
 	    echo "${LEM_STR}" >> ${LEM_INIT_CONF_FILE}
 
 	    LEM_STR='${LEC_BIN} '"${ENC_NODE_STR} -P ${NBR} -I 1"
@@ -376,7 +380,7 @@ gen_lem_templates() {
 	    if [ ${DUAL_HOME} -eq 1 ]; then
 		ENC_NODE_STR="-h \$enclave${ENC}_le2_node\$"
 		LEM_STR='${LEC_BIN} '"${ENC_NODE_STR} -P ${NBR}"
-		LEM_STR="${LEM_STR} -s \$enclave${NBR}_iron_wan2_addr\$/32"
+		LEM_STR="${LEM_STR} -s \$enclave${NBR}_iron_wan2_addr\$/24"
 		echo "${LEM_STR}" >> ${LEM_INIT_CONF_FILE}
 
 		LEM_STR='${LEC_BIN} '"${ENC_NODE_STR} -P ${NBR} -I 1"

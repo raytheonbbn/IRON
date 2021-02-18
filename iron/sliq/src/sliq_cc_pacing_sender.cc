@@ -35,24 +35,6 @@
  */
 /* IRON: end */
 
-//============================================================================
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2015 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-//============================================================================
-
 #include "sliq_cc_pacing_sender.h"
 #include "sliq_types.h"
 
@@ -242,7 +224,7 @@ PktSeqNumber PacingSender::OnPacketSent(StreamId stream_id,
 
   // The next packet should be sent as soon as the current packets have been
   // transferred.
-  Capacity  bits_per_second = cc_alg_->PacingRate();
+  Capacity  bits_per_second = cc_alg_->SendPacingRate();
   Time      delay;
 
   if (bits_per_second > 0)
@@ -383,15 +365,15 @@ Time PacingSender::TimeUntilSend(const Time& now)
 }
 
 //============================================================================
-Capacity PacingSender::PacingRate()
+Capacity PacingSender::SendPacingRate()
 {
-  return cc_alg_->PacingRate();
+  return cc_alg_->SendPacingRate();
 }
 
 //============================================================================
-Capacity PacingSender::CapacityEstimate()
+Capacity PacingSender::SendRate()
 {
-  return cc_alg_->CapacityEstimate();
+  return cc_alg_->SendRate();
 }
 
 //============================================================================

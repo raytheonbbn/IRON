@@ -5,7 +5,7 @@ digraph sliq_outage {
     blk1 [ shape = box,     label = "Stream that detected outage sends 1 persist data pkt\nStart RTO timer with outage duration" ];
     blk2 [ shape = box,     label = "Do normal RTO timer expiration processing" ];
     blk3 [ shape = box,     label = "Set in_outage = true\nRecord stream that detected outage\nStart RTO timer with outage duration" ];
-    blk4 [ shape = box,     label = "Allow all streams to purge data from xmit queues\nSet in_outage = false\nStop RTO timer\nResend up to 2 lost data pkts\nIf unACKed data exists, then start RTO timer with RTO duration" ];
+    blk4 [ shape = box,     label = "Allow all streams to purge data from xmit queues\nSet in_outage = false\nStop RTO timer\nEach stream sends a lost data pkt or persist pkt\nIf unACKed data exists, then start RTO timer with RTO duration" ];
     dsc1 [ shape = diamond, label = "Is in_outage == true?" ];
     dsc2 [ shape = diamond, label = "Is peer\nresponsive?" ];
     dsc3 [ shape = diamond, label = "Does a stream\ndetect an outage?" ];

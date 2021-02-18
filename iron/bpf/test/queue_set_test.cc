@@ -312,7 +312,26 @@ private:
 
     CPPUNIT_ASSERT(queue_depths != NULL);
 
-    return queue_depths->GetBinDepthByIdx(bin_idx, lat);
+    // If unicast, just return the bin depth value directly
+    if (!bin_map_->IsMcastBinIndex(bin_idx))
+    {
+      return queue_depths->GetBinDepthByIdx(bin_idx, lat);
+    }
+
+    // If multicast, we need to add up the individual bins
+    else
+    {
+      uint32_t value    = 0;
+      BinIndex dst_bidx = iron::kInvalidBinIndex;
+
+      for (bool valid = bin_map_->GetFirstUcastBinIndex(dst_bidx);
+	   valid;
+	   valid = bin_map_->GetNextUcastBinIndex(dst_bidx))
+      {
+	value += queue_depths->GetBinDepthByIdx(dst_bidx, lat);
+      }
+      return value;
+    }
   }
 
   //==========================================================================

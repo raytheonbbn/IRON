@@ -35,22 +35,6 @@
  * SOFTWARE.
  */
 /* IRON: end */
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 //============================================================================
 
 #include "sliq_framer.h"
@@ -70,6 +54,7 @@ using ::sliq::CcPktTrainHeader;
 using ::sliq::CcSyncHeader;
 using ::sliq::CloseConnHeader;
 using ::sliq::ConnHndshkHeader;
+using ::sliq::ConnMeasHeader;
 using ::sliq::CreateStreamHeader;
 using ::sliq::DataHeader;
 using ::sliq::Framer;
@@ -374,7 +359,7 @@ bool Framer::AppendDataHeader(Packet*& packet, const DataHeader& input,
   {
     uint16_t  tmp =
       (((static_cast<uint16_t>(input.fec_pkt_type) & 0x01) << 15) |
-       ((static_cast<uint16_t>(input.fec_block_index) & 0x3f) << 8) |
+       ((static_cast<uint16_t>(input.fec_group_index) & 0x3f) << 8) |
        ((static_cast<uint16_t>(input.fec_num_src) & 0x0f) << 4) |
        (static_cast<uint16_t>(input.fec_round) & 0x0f));
 
@@ -559,6 +544,48 @@ bool Framer::AppendRcvdPktCntHeader(Packet*& packet,
 }
 
 //============================================================================
+bool Framer::AppendConnMeasHeader(Packet*& packet,
+                                  const ConnMeasHeader& input)
+{
+  if (packet == NULL)
+  {
+    packet = packet_pool_.Get();
+
+    if (packet == NULL)
+    {
+      LogE(kClassName, __func__, "Error getting packet from pool.\n");
+      return false;
+    }
+  }
+
+  // Generate the flags field.
+  uint8_t  flags = (input.owd_flag ? 0x80 : 0x00);
+
+  // Build the header.
+  if ((!WriteUint8(CONN_MEAS_HEADER, packet)) ||
+      (!WriteUint8(flags, packet)) ||
+      (!WriteUint16(input.sequence_number, packet)))
+  {
+    LogE(kClassName, __func__, "Error generating connection measurement "
+         "header common fields.\n");
+    return false;
+  }
+
+  // Append the maximum remote-to-local one-way delay field if needed.
+  if (input.owd_flag)
+  {
+    if (!WriteUint32(input.max_rmt_to_loc_owd, packet))
+    {
+      LogE(kClassName, __func__, "Error appending maximum remote to local "
+           "one-way delay.\n");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+//============================================================================
 Packet* Framer::GenerateCcPktTrain(const CcPktTrainHeader& input,
                                    size_t payload_length)
 {
@@ -619,7 +646,7 @@ HeaderType Framer::GetHeaderType(const Packet* packet, size_t offset)
   }
 
   // Test the most likely success case first for efficiency.
-  if (((type_byte >= DATA_HEADER) && (type_byte <= RCVD_PKT_CNT_HEADER)) ||
+  if (((type_byte >= DATA_HEADER) && (type_byte <= CONN_MEAS_HEADER)) ||
       ((type_byte >= CONNECTION_HANDSHAKE_HEADER) &&
        (type_byte <= RESET_STREAM_HEADER)) ||
       (type_byte == CC_PKT_TRAIN_HEADER))
@@ -883,8 +910,8 @@ bool Framer::ParseDataHeader(Packet* packet, size_t& offset,
     }
 
     output.fec_pkt_type    = static_cast<FecPktType>((tmp >> 15) & 0x01);
-    output.fec_block_index = static_cast<FecBlock>((tmp >> 8) & 0x3f);
-    output.fec_num_src     = static_cast<FecBlock>((tmp >> 4) & 0x0f);
+    output.fec_group_index = static_cast<FecSize>((tmp >> 8) & 0x3f);
+    output.fec_num_src     = static_cast<FecSize>((tmp >> 4) & 0x0f);
     output.fec_round       = static_cast<FecRound>(tmp & 0x0f);
   }
 
@@ -1050,6 +1077,40 @@ bool Framer::ParseRcvdPktCntHeader(const Packet* packet, size_t& offset,
     LogE(kClassName, __func__, "Error parsing received packet count "
          "header.\n");
     return false;
+  }
+
+  return true;
+}
+
+//============================================================================
+bool Framer::ParseConnMeasHeader(const Packet* packet, size_t& offset,
+                                 ConnMeasHeader& output)
+{
+  // Skip the packet type byte.
+  offset += 1;
+
+  // Parse the header.
+  uint8_t  flags   = 0;
+
+  if ((!ReadUint8(packet, offset, flags)) ||
+      (!ReadUint16(packet, offset, output.sequence_number)))
+  {
+    LogE(kClassName, __func__, "Error parsing connection measurement common "
+         "fields.\n");
+    return false;
+  }
+
+  output.owd_flag = ((flags & 0x80) != 0);
+
+  // Parse the optional maximum remote-to-local one-way delay field if needed.
+  if (output.owd_flag)
+  {
+    if (!ReadUint32(packet, offset, output.max_rmt_to_loc_owd))
+    {
+      LogE(kClassName, __func__, "Error parsing maximum remote-to-local "
+           "one-way delay.\n");
+      return false;
+    }
   }
 
   return true;
@@ -1283,15 +1344,15 @@ ConnHndshkHeader::ConnHndshkHeader(uint8_t num_alg, MsgTag tag,
     cc_alg[i].deterministic_flag     = alg[i].deterministic_copa;
     cc_alg[i].pacing_flag            = alg[i].cubic_reno_pacing;
 
-    if (alg[i].algorithm == COPA_CONST_DELTA_CC)
+    if (alg[i].algorithm == COPA1_CONST_DELTA_CC)
     {
       cc_alg[i].congestion_control_params =
         static_cast<uint32_t>((alg[i].copa_delta * 1000.0) + 0.5);
     }
-    else if (alg[i].algorithm == COPA3_CC)
+    else if (alg[i].algorithm == COPA_CC)
     {
       cc_alg[i].congestion_control_params =
-        static_cast<uint32_t>((alg[i].copa3_anti_jitter * 1000000.0) + 0.5);
+        static_cast<uint32_t>((alg[i].copa_anti_jitter * 1000000.0) + 0.5);
     }
     else if (alg[i].algorithm == FIXED_RATE_TEST_CC)
     {
@@ -1321,32 +1382,32 @@ size_t ConnHndshkHeader::ConvertToCongCtrl(CongCtrl* alg, size_t max_alg)
       alg[i].deterministic_copa = cc_alg[i].deterministic_flag;
       alg[i].cubic_reno_pacing  = cc_alg[i].pacing_flag;
 
-      if (alg[i].algorithm == COPA_CONST_DELTA_CC)
+      if (alg[i].algorithm == COPA1_CONST_DELTA_CC)
       {
-        alg[i].copa_delta        =
+        alg[i].copa_delta       =
           (static_cast<double>(cc_alg[i].congestion_control_params) * 0.001);
-        alg[i].copa3_anti_jitter = 0.0;
-        alg[i].fixed_send_rate   = 0;
+        alg[i].copa_anti_jitter = 0.0;
+        alg[i].fixed_send_rate  = 0;
       }
-      else if (alg[i].algorithm == COPA3_CC)
+      else if (alg[i].algorithm == COPA_CC)
       {
-        alg[i].copa_delta        = 0.0;
-        alg[i].copa3_anti_jitter =
+        alg[i].copa_delta       = 0.0;
+        alg[i].copa_anti_jitter =
           (static_cast<double>(cc_alg[i].congestion_control_params) *
            0.000001);
         alg[i].fixed_send_rate   = 0;
       }
       else if (alg[i].algorithm == FIXED_RATE_TEST_CC)
       {
-        alg[i].copa_delta        = 0.0;
-        alg[i].copa3_anti_jitter = 0.0;
-        alg[i].fixed_send_rate   = cc_alg[i].congestion_control_params;
+        alg[i].copa_delta       = 0.0;
+        alg[i].copa_anti_jitter = 0.0;
+        alg[i].fixed_send_rate  = cc_alg[i].congestion_control_params;
       }
       else
       {
-        alg[i].copa_delta        = 0.0;
-        alg[i].copa3_anti_jitter = 0.0;
-        alg[i].fixed_send_rate   = 0;
+        alg[i].copa_delta       = 0.0;
+        alg[i].copa_anti_jitter = 0.0;
+        alg[i].fixed_send_rate  = 0;
       }
     }
   }
@@ -1453,7 +1514,7 @@ DataHeader::DataHeader()
       persist_flag(false), fin_flag(false), stream_id(0),
       num_ttg(0), cc_id(0), retransmission_count(0), sequence_number(0),
       timestamp(0), timestamp_delta(0), move_fwd_seq_num(0),
-      fec_pkt_type(FEC_SRC_PKT), fec_block_index(0), fec_num_src(0),
+      fec_pkt_type(FEC_SRC_PKT), fec_group_index(0), fec_num_src(0),
       fec_round(0), fec_group_id(0), encoded_pkt_length(0), ttg(),
       payload_offset(0), payload_length(0), payload(NULL)
 {}
@@ -1464,14 +1525,14 @@ DataHeader::DataHeader(bool epl, bool fec, bool move_fwd, bool persist,
                        RetransCount rx_cnt, PktSeqNumber seq_num,
                        PktTimestamp ts, PktTimestamp ts_delta,
                        PktSeqNumber mf_seq_num, FecPktType fec_type,
-                       FecBlock fec_idx, FecBlock fec_src, FecRound fec_rnd,
+                       FecSize fec_idx, FecSize fec_src, FecRound fec_rnd,
                        FecGroupId fec_grp, FecEncPktLen enc_pkt_len)
     : enc_pkt_len_flag(epl), fec_flag(fec), move_fwd_flag(move_fwd),
       persist_flag(persist), fin_flag(fin), stream_id(sid),
       num_ttg(ttgs), cc_id(id), retransmission_count(rx_cnt),
       sequence_number(seq_num), timestamp(ts), timestamp_delta(ts_delta),
       move_fwd_seq_num(mf_seq_num), fec_pkt_type(fec_type),
-      fec_block_index(fec_idx), fec_num_src(fec_src), fec_round(fec_rnd),
+      fec_group_index(fec_idx), fec_num_src(fec_src), fec_round(fec_rnd),
       fec_group_id(fec_grp), encoded_pkt_length(enc_pkt_len),
       ttg(), payload_offset(0), payload_length(0), payload(NULL)
 {}
@@ -1512,6 +1573,16 @@ RcvdPktCntHeader::RcvdPktCntHeader(StreamId sid, RetransCount rexmit_cnt,
                                    PktSeqNumber seq_num, PktCount cnt)
     : stream_id(sid), retransmission_count(rexmit_cnt),
       sequence_number(seq_num), rcvd_data_pkt_count(cnt)
+{}
+
+//============================================================================
+ConnMeasHeader::ConnMeasHeader()
+    : owd_flag(false), sequence_number(0), max_rmt_to_loc_owd(0)
+{}
+
+//============================================================================
+ConnMeasHeader::ConnMeasHeader(bool owd, uint16_t sn, uint32_t max_owd)
+    : owd_flag(owd), sequence_number(sn), max_rmt_to_loc_owd(max_owd)
 {}
 
 //============================================================================

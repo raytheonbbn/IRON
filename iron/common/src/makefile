@@ -131,6 +131,7 @@ LIB_SOURCE = bin_map.cc \
              packet.cc \
              packet_fifo.cc \
              packet_history_mgr.cc \
+             packet_pool_heap.cc \
              packet_pool_shm.cc \
              packet_queue.cc \
              packet_set.cc \

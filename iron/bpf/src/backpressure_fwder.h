@@ -44,6 +44,7 @@
 
 #include "fifo_if.h"
 #include "config_info.h"
+#include "backpressure_dequeue_alg.h"
 #include "bin_indexable_array.h"
 #include "bpf_stats.h"
 #include "genxplot.h"
@@ -62,7 +63,6 @@
 #include "remote_control.h"
 #include "rng.h"
 #include "timer.h"
-#include "uber_fwd_alg.h"
 
 #include <limits>
 #include <map>
@@ -323,12 +323,6 @@ namespace iron
     ///
     /// \return  True if the initialization is successful, false otherwise.
     virtual bool InitializeFifos();
-
-    /// \brief Preseed the virtual queues with config info data.
-    ///
-    /// \param  ci  The config info object where we read virtual queue data.
-    ///
-    void PreseedVirtQueues(const ConfigInfo& ci);
 
     /// \brief Generate a new GRoup Advertisement Message (GRAM) packet.
     /// The GRAM format:
@@ -844,7 +838,7 @@ namespace iron
     QueueStore*                              queue_store_;
 
     /// The Bpf pkt forwarding algorithm interface.
-    UberFwdAlg*                              bpf_fwd_alg_;
+    BPDequeueAlg*                            bpf_dequeue_alg_;
 
     /// Last QLAM packet size: this is used to "predict" the size of the next
     /// QLAM and therefore compute when to send it.
@@ -1448,10 +1442,6 @@ namespace iron
     /// mcast forwarding.
     bool                                mcast_agg_;
 
-    /// Mash table to store the mapping of multicast group to application
-    /// node IP addresses.
-    iron::MashTable<iron::Ipv4Address, List<std::string>*>  mcast_group_cache_;
-
     /// Linked list to store a list of multicast group for which the iron node
     /// is a receiver.
     iron::List<Ipv4Address>            mcast_group_memberships_;
@@ -1459,6 +1449,10 @@ namespace iron
     /// The config info object used configure the BPF. This is used for configuring
     /// Queue Managers on demand.
     iron::ConfigInfo&                  config_info_;
+
+    // The maximum number of solutions that may be returned during each
+    // execution of the dequeue algorithm.
+    uint8_t                            max_num_dequeue_alg_solutions_;
 
     /// A flag to indicate if group advertisement messages are to be sent.
     bool                               send_grams_;

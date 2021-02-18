@@ -35,22 +35,6 @@
  * SOFTWARE.
  */
 /* IRON: end */
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 //============================================================================
 
 #ifndef IRON_SLIQ_CONNECTION_H
@@ -84,7 +68,7 @@ namespace sliq
   struct CcAlg
   {
     CcAlg();
-    ~CcAlg();
+    virtual ~CcAlg();
 
     /// The congestion control algorithm object.
     CongCtrlInterface*   cc_alg;
@@ -110,7 +94,7 @@ namespace sliq
   struct CcAlgs
   {
     CcAlgs();
-    ~CcAlgs();
+    virtual ~CcAlgs();
 
     /// The overall setting for unacknowledged packet reporting.  Set to true
     /// if at least one congestion control algorithm requires this reporting.
@@ -128,6 +112,9 @@ namespace sliq
     /// The amount of time, in seconds, since a congestion control limit event
     /// caused a capacity estimate update.
     double             ccl_time_sec;
+
+    /// The current send rate estimate in bits per second.
+    double             send_rate_est_bps;
 
     /// The number of congestion control algorithms currently in use.
     size_t             num_cc_alg;
@@ -266,6 +253,11 @@ namespace sliq
     /// \return  Returns true on success, or false if this setting is not
     ///          supported by the algorithm.
     bool ConfigureTcpFriendliness(uint32_t num_flows);
+
+    /// \brief Configure the RTT outlier rejection setting.
+    ///
+    /// \param  enable_rtt_or  The RTT outlier rejection setting.
+    void ConfigureRttOutlierRejection(bool enable_rtt_or);
 
     /// \brief Configure a stream's transmit queue.
     ///
@@ -519,14 +511,15 @@ namespace sliq
     /// \return  The current local timestamp.
     PktTimestamp GetCurrentLocalTimestamp();
 
-    /// \brief Get the current one-way delay estimate for a packet.
+    /// \brief Get the current remote-to-local one-way delay estimate for a
+    /// packet.
     ///
     /// \param  send_ts    The sender's timestamp from the packet header.
     /// \param  recv_time  A reference to the packet receive time.
     ///
-    /// \return  The current one-way delay estimate, in seconds.
-    double GetOneWayDelayEst(PktTimestamp send_ts,
-                             const iron::Time& recv_time);
+    /// \return  The current remote-to-local one-way delay estimate for the
+    ///          packet, in seconds.
+    double GetRtlOwdEst(PktTimestamp send_ts, const iron::Time& recv_time);
 
     /// \brief Perform any pending callbacks.
     ///
@@ -607,6 +600,21 @@ namespace sliq
       return stats_snd_data_pkts_sent_;
     }
 
+    /// \brief Get the maximum local-to-remote one-way delay estimate as
+    /// reported by the peer.
+    ///
+    /// This estimate is only available (i.e., non-zero) if one of the
+    /// connection's streams is using a reliability mode that requires this
+    /// information (SEMI_RELIABLE_ARQ_FEC mode with the target packet
+    /// delivery limit specified as a time).
+    ///
+    /// \return  The current maximum local-to-remote one-way delay estimate.
+    ///          Will be zero if this estimate is not available.
+    inline iron::Time GetMaxLtrOwdEst() const
+    {
+      return ltr_owd_.max_ltr_owd_;
+    }
+
     /// \brief Get the current packet error rate (PER) estimate for packets
     /// sent by the connection.
     ///
@@ -614,6 +622,14 @@ namespace sliq
     inline double StatsGetLocalPer() const
     {
       return stats_local_per_;
+    }
+
+    /// \brief Get the current send rate estimate for the connection.
+    ///
+    /// \return  The current send rate estimate in bps.
+    inline double StatsGetSendRate() const
+    {
+      return cc_algs_.send_rate_est_bps;
     }
 
    private:
@@ -838,10 +854,8 @@ namespace sliq
     /// \brief Process a received ACK header.
     ///
     /// \param  hdr       The received header.
-    /// \param  src       The source address of the received header.
     /// \param  rcv_time  The receive time.
-    void ProcessAck(AckHeader& hdr, const iron::Ipv4Endpoint& src,
-                    const iron::Time& rcv_time);
+    void ProcessAck(AckHeader& hdr, const iron::Time& rcv_time);
 
     /// \brief Process an implicit ACK.
     ///
@@ -855,6 +869,11 @@ namespace sliq
     /// \param  rcv_time  The receive time.
     void ProcessRcvdPktCntInfo(RcvdPktCntHeader& hdr,
                                const iron::Time& rcv_time);
+
+    /// \brief Process a received connection measurement header.
+    ///
+    /// \param  hdr  The received connection measurement header.
+    void ProcessConnMeasInfo(ConnMeasHeader& hdr);
 
     /// \brief Immediately send an ACK packet and record that it was sent.
     ///
@@ -910,6 +929,17 @@ namespace sliq
     ///                   NULL, then a packet will be generated and placed in
     ///                   this pointer.
     void AddRcvdPktCnt(size_t rsvd_len, iron::Packet*& pkt);
+
+    /// \brief Attempt to add a connection measurement header to a packet.
+    ///
+    /// \param  now       The current time.
+    /// \param  rsvd_len  The reserved packet length in bytes.
+    /// \param  pkt       A reference to a pointer to the packet where the
+    ///                   connection measurement header will be appended.  If
+    ///                   NULL, then a packet will be generated and placed in
+    ///                   this pointer.
+    void AddConnMeas(const iron::Time& now, size_t rsvd_len,
+                     iron::Packet*& pkt);
 
     /// \brief Check if all of the stream data being sent is currently ACKed.
     ///
@@ -1081,7 +1111,9 @@ namespace sliq
     /// \param  stream     A pointer to the new Stream object.
     /// \param  stream_id  The stream ID.
     /// \param  prio       The stream's priority.
-    void RecordNewStream(Stream* stream, StreamId stream_id, Priority prio);
+    /// \param  rel        The stream's reliability settings.
+    void RecordNewStream(Stream* stream, StreamId stream_id, Priority prio,
+                         const Reliability& rel);
 
     /// \brief Get the Stream pointer for a stream ID.
     ///
@@ -1171,7 +1203,7 @@ namespace sliq
     struct StreamInfo
     {
       StreamInfo();
-      ~StreamInfo();
+      virtual ~StreamInfo();
 
       Stream*   stream;
       Priority  priority;
@@ -1186,6 +1218,9 @@ namespace sliq
     /// \brief Helper structure for a band of streams with the same priority.
     struct BandInfo
     {
+      BandInfo() : prio(0), start(0), size(0), next(0) {}
+      virtual ~BandInfo() {}
+
       Priority  prio;
       size_t    start;
       size_t    size;
@@ -1202,7 +1237,7 @@ namespace sliq
     struct PrioRndRbnInfo
     {
       PrioRndRbnInfo() : num_streams(0), num_bands(0), band(), stream_id() {}
-      ~PrioRndRbnInfo() {}
+      virtual ~PrioRndRbnInfo() {}
 
       size_t    num_streams;
       size_t    num_bands;
@@ -1213,8 +1248,7 @@ namespace sliq
     };
 
     /// \brief The structure of state information for tracking the estimated
-    /// one-way delay (OWD) for packets sent from the remote endpoint to this
-    /// (the local) endpoint.
+    /// one-way delay (OWD) for remote-to-local packets.
     ///
     /// GOAL: To adjust each packet's time-to-go (TTG) value by the OWD for
     /// that packet.  This includes the transmission, propagation, and
@@ -1290,16 +1324,28 @@ namespace sliq
     ///
     ///   ttg' = ttg - owd
     ///
-    struct OwdInfo
+    struct RtlOwdInfo
     {
-      OwdInfo()
-          : cur_ready_(false), cur_min_rtt_(), cur_min_local_delta_(0),
-            next_end_time_(), next_delta_cnt_(0), next_min_local_delta_(0),
-            next_min_remote_delta_(0), prev_pkt_delta_(0)
+      RtlOwdInfo()
+          : send_max_rtl_owd_(false), next_max_rtl_send_time_(),
+            next_cm_hdr_seq_(0), cur_ready_(false), cur_min_rtt_(),
+            cur_min_local_delta_(0), next_end_time_(), next_delta_cnt_(0),
+            next_min_local_delta_(0), next_min_remote_delta_(0),
+            prev_pkt_delta_(0)
       {}
 
-      ~OwdInfo()
+      virtual ~RtlOwdInfo()
       {}
+
+      /// A flag controlling if the maximum remote-to-local one-way delay
+      /// computed locally should be sent to the remote side.
+      bool        send_max_rtl_owd_;
+
+      /// The next maximum remote-to-local one-way delay send time.
+      iron::Time  next_max_rtl_send_time_;
+
+      /// The next connection measurement header sequence number.
+      uint16_t    next_cm_hdr_seq_;
 
       /// A flag recording if the current state is ready or not.
       bool        cur_ready_;
@@ -1328,6 +1374,27 @@ namespace sliq
       /// The previous timestamp delta value computed, in microseconds.  Used
       /// when the received data packet is missing the send timestamp.
       int64_t     prev_pkt_delta_;
+    };
+
+    /// \brief The structure of state information for receiving the maximum
+    /// estimated one-way delay (OWD) for local-to-remote packets.
+    struct LtrOwdInfo
+    {
+      LtrOwdInfo()
+          : init_(false), cm_hdr_seq_(0), max_ltr_owd_()
+      {}
+
+      virtual ~LtrOwdInfo()
+      {}
+
+      /// The intialization flag.
+      bool        init_;
+
+      /// The last received connection measurement header sequence number.
+      uint16_t    cm_hdr_seq_;
+
+      /// The last received maximum local-to-remote one-way delay (OWD).
+      iron::Time  max_ltr_owd_;
     };
 
     // ---------- Components Used By Connections ----------
@@ -1495,8 +1562,13 @@ namespace sliq
 
     // ---------- OWD Estimates ----------
 
-    /// The One-Way Delay (OWD) estimate information for adjusting TTG values.
-    OwdInfo              owd_;
+    /// The remote-to-local one-way delay (OWD) estimate information.
+    /// Computed locally using packet timestamps.
+    RtlOwdInfo           rtl_owd_;
+
+    /// The maximum local-to-remote one-way delay (OWD) estimate information.
+    /// Computed remotely and transferred via connection measurement headers.
+    LtrOwdInfo           ltr_owd_;
 
     // ---------- Close Connection Callbacks ----------
 

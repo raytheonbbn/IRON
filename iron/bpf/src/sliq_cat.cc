@@ -76,6 +76,7 @@ using ::sliq::RttPdd;
 using ::sliq::Priority;
 using ::sliq::Reliability;
 using ::sliq::ReliabilityMode;
+using ::sliq::RexmitRounds;
 using ::sliq::StreamId;
 using ::sliq::RexmitLimit;
 using ::std::string;
@@ -135,6 +136,24 @@ namespace
   /// semi-reliable retransmission limit.
   const RexmitLimit  kDataRexmitLimit          = 5;
 
+  /// The minimum EF data packet ARQ+FEC delivery time limit in seconds.
+  const double       kEfDataArqFecMinTime      = 0.001;
+
+  /// The maximum EF data packet ARQ+FEC delivery time limit in seconds.
+  const double       kEfDataArqFecMaxTime      = 64.0;
+
+  /// The minimum EF data packet ARQ+FEC delivery limit in rounds.
+  const int          kEfDataArqFecMinRnds      = 1;
+
+  /// The maximum EF data packet ARQ+FEC delivery limit in rounds.
+  const int          kEfDataArqFecMaxRnds      = 7;
+
+  /// The minimum EF data packet ARQ+FEC target packet delivery probability.
+  const double       kEfDataArqFecMinProb      = 0.95;
+
+  /// The maximum EF data packet ARQ+FEC target packet delivery probability.
+  const double       kEfDataArqFecMaxProb      = 0.999;
+
   /// The QLAM packet transmit queue size in packets.
   const size_t       kQlamXmitQueuePkts        = 1;
 
@@ -148,11 +167,11 @@ namespace
   /// limits the maximum number of packets that can be sent in each callback.
   const size_t       kCapEstXmitQueuePkts      = 250;
 
-  /// The minimum Copa constant delta value.
-  const double       kMinCopaConstDelta        = 0.004;
+  /// The minimum CopaBeta1 constant delta value.
+  const double       kMinCopaBeta1ConstDelta   = 0.004;
 
-  /// The maximum Copa constant delta value.
-  const double       kMaxCopaConstDelta        = 1.0;
+  /// The maximum CopaBeta1 constant delta value.
+  const double       kMaxCopaBeta1ConstDelta   = 1.0;
 
   /// The connection retry timer interval, in seconds.
   const int          kConnRetrySec             = 1;
@@ -238,6 +257,7 @@ SliqCat::SliqCat(BPFwder* bpf, PacketPool& packet_pool, Timer& timer)
       num_cc_alg_(0),
       cc_alg_(),
       cc_aggr_(0),
+      rtt_outlier_rejection_(false),
       data_xmit_queue_size_(kDefaultDataXmitQueuePkts),
       endpt_id_(-1),
       qlam_stream_id_(0),
@@ -370,7 +390,7 @@ bool SliqCat::Initialize(const ConfigInfo& config_info, uint32_t config_id)
     return false;
   }
 
-  // Extract the Copa3 congestion control anti-jitter setting.
+  // Extract the Copa congestion control anti-jitter setting.
   config_name = config_prefix;
   config_name.append(".AntiJitter");
   double  anti_jitter = config_info.GetUint(config_name, 0.0);
@@ -378,7 +398,7 @@ bool SliqCat::Initialize(const ConfigInfo& config_info, uint32_t config_id)
   // Extract the congestion control setting.
   config_name = config_prefix;
   config_name.append(".CongCtrl");
-  string  cc_alg_str = config_info.Get(config_name, "Cubic,Copa3");
+  string  cc_alg_str = config_info.Get(config_name, "Cubic,Copa");
 
   if (!ParseCongCtrlString(cc_alg_str, anti_jitter))
   {
@@ -392,6 +412,11 @@ bool SliqCat::Initialize(const ConfigInfo& config_info, uint32_t config_id)
   config_name = config_prefix;
   config_name.append(".Aggr");
   cc_aggr_ = static_cast<uint32_t>(config_info.GetUint(config_name, 0));
+
+  // Extract the RTT outlier rejection setting.
+  config_name = config_prefix;
+  config_name.append(".RttOutRej");
+  rtt_outlier_rejection_ = config_info.GetBool(config_name, false);
 
   // Extract the active capacity estimation setting.
   config_name = config_prefix;
@@ -461,7 +486,9 @@ bool SliqCat::Initialize(const ConfigInfo& config_info, uint32_t config_id)
        cc_alg_str.c_str());
   LogC(kClassName, __func__, "CongCtrl Aggressiveness      : %" PRIu32 "\n",
        cc_aggr_);
-  LogC(kClassName, __func__, "Copa3 Anti-Jitter            : %0.6f\n",
+  LogC(kClassName, __func__, "RTT Outlier Rejection        : %d\n",
+       static_cast<int>(rtt_outlier_rejection_));
+  LogC(kClassName, __func__, "Copa Anti-Jitter             : %0.6f\n",
        anti_jitter);
   LogC(kClassName, __func__, "Active Capacity Estimation   : %d\n",
        static_cast<int>(active_cap_est_));
@@ -795,6 +822,16 @@ void SliqCat::ProcessConnectionResult(EndptId endpt_id, bool success)
     {
       LogW(kClassName, __func__, "SliqCat %" PRIu32 ": Unable to configure "
            "congestion control aggressiveness.\n", path_controller_number_);
+    }
+  }
+
+  // Set the RTT outlier rejection option.
+  if (rtt_outlier_rejection_)
+  {
+    if (!ConfigureRttOutlierRejection(endpt_id_, true))
+    {
+      LogW(kClassName, __func__, "SliqCat %" PRIu32 ": Unable to configure "
+           "RTT outlier rejection.\n", path_controller_number_);
     }
   }
 
@@ -1425,8 +1462,13 @@ bool SliqCat::ParseEndpointsString(const string& ep_str)
 //============================================================================
 bool SliqCat::ParseEfDataRelString(const string& ef_rel_str)
 {
-  double  time_limit = 0.0;
-  double  recv_prob  = 0.0;
+  bool          limit_is_time = false;
+  RexmitRounds  rounds_limit  = 0;
+  double        time_limit    = 0.0;
+  double        recv_prob     = 0.0;
+
+  LogD(kClassName, __func__, "SliqCat %" PRIu32 ": parsing %s\n",
+       path_controller_number_, ef_rel_str.c_str());
 
   // Parse the setting string.
   if (ef_rel_str.substr(0, 7) == "ARQFEC(")
@@ -1441,13 +1483,49 @@ bool SliqCat::ParseEfDataRelString(const string& ef_rel_str)
       return false;
     }
 
+    // Parse the limit.
     if (!fec_val.Pop(tok))
     {
       return false;
     }
 
-    time_limit = StringUtils::GetDouble(tok, -1.0);
+    // Determine if the limit is a time in seconds or a number of rounds.
+    // Times have at least one numeric character and end with an "s"
+    // character, so they cannot be less than 2 characters long.
+    if ((tok.size() > 1) && (tok.substr(tok.size() - 1, 1) == "s"))
+    {
+      // Limit is a time in seconds.
+      string  tok2 = tok.substr(0, tok.size() - 1);
 
+      time_limit = StringUtils::GetDouble(tok2, -1.0);
+
+      if ((time_limit < kEfDataArqFecMinTime) ||
+          (time_limit > kEfDataArqFecMaxTime))
+      {
+        LogE(kClassName, __func__, "SliqCat %" PRIu32 ": Invalid time limit: "
+             "%s\n", path_controller_number_, tok.c_str());
+        return false;
+      }
+
+      limit_is_time = true;
+    }
+    else
+    {
+      // Limit is a number of rounds.
+      int  val = StringUtils::GetInt(tok, -1);
+
+      if ((val < kEfDataArqFecMinRnds) || (val > kEfDataArqFecMaxRnds))
+      {
+        LogE(kClassName, __func__, "SliqCat %" PRIu32 ": Invalid number of "
+             "rounds limit: %s\n", path_controller_number_, tok.c_str());
+        return false;
+      }
+
+      rounds_limit  = static_cast<RexmitRounds>(val);
+      limit_is_time = false;
+    }
+
+    // Parse the receive probability.
     if (!fec_val.Pop(tok))
     {
       return false;
@@ -1455,17 +1533,42 @@ bool SliqCat::ParseEfDataRelString(const string& ef_rel_str)
 
     recv_prob = StringUtils::GetDouble(tok, -1.0);
 
-    if ((time_limit < 0.001) || (time_limit > 64.0) ||
-        (recv_prob < 0.5) || (recv_prob > 0.999))
+    if ((recv_prob < kEfDataArqFecMinProb) ||
+        (recv_prob > kEfDataArqFecMaxProb))
     {
+      LogE(kClassName, __func__, "SliqCat %" PRIu32 ": Invalid probability "
+           "of receive: %s\n", path_controller_number_, tok.c_str());
       return false;
     }
 
-    ef_rel_.SetSemiRelArqFecUsingTime(kEfDataArqFecRexmitLimit, recv_prob,
-                                      time_limit);
+    // Store the reliability settings.
+    if (limit_is_time)
+    {
+      LogD(kClassName, __func__, "SliqCat %" PRIu32 ": Configuring ARQFEC "
+           "with: rexmit_limit %" PRIRexmitLimit ", recv_prob %f, time_limit "
+           "%f s.\n", path_controller_number_, kEfDataArqFecRexmitLimit,
+           recv_prob, time_limit);
+
+      ef_rel_.SetSemiRelArqFecUsingTime(kEfDataArqFecRexmitLimit, recv_prob,
+                                        time_limit);
+    }
+    else
+    {
+      LogD(kClassName, __func__, "SliqCat %" PRIu32 ": Configuring ARQFEC "
+           "with: rexmit_limit %" PRIRexmitLimit ", recv_prob %f, "
+           "rounds_limit %" PRIRexmitRounds ".\n", path_controller_number_,
+           kEfDataArqFecRexmitLimit, recv_prob, rounds_limit);
+
+      ef_rel_.SetSemiRelArqFecUsingRounds(kEfDataArqFecRexmitLimit, recv_prob,
+                                          rounds_limit);
+    }
   }
   else if (ef_rel_str == "ARQ")
   {
+    LogD(kClassName, __func__, "SliqCat %" PRIu32 ": Configuring ARQ with: "
+         "rexmit_limit %" PRIRexmitLimit ".\n", path_controller_number_,
+         kEfDataArqRexmitLimit);
+
     ef_rel_.SetSemiRelArq(kEfDataArqRexmitLimit);
   }
   else
@@ -1501,43 +1604,45 @@ bool SliqCat::ParseCongCtrlString(const string& cc_alg_str,
     {
       cc_alg_[i].SetTcpCubic();
     }
-    else if (cc_tok == "CopaM")
+    else if (cc_tok == "CopaBeta1M")
     {
-      cc_alg_[i].SetCopaM(false);
+      cc_alg_[i].SetCopaBeta1M(false);
     }
-    else if (cc_tok == "DetCopaM")
+    else if (cc_tok == "DetCopaBeta1M")
     {
-      cc_alg_[i].SetCopaM(true);
+      cc_alg_[i].SetCopaBeta1M(true);
     }
-    else if (cc_tok.substr(0, 5) == "Copa_")
+    else if (cc_tok.substr(0, 10) == "CopaBeta1_")
     {
-      double  delta = StringUtils::GetDouble(cc_tok.substr(5));
+      double  delta = StringUtils::GetDouble(cc_tok.substr(10));
 
-      if ((delta < kMinCopaConstDelta) || (delta > kMaxCopaConstDelta))
+      if ((delta < kMinCopaBeta1ConstDelta) ||
+          (delta > kMaxCopaBeta1ConstDelta))
       {
         return false;
       }
 
-      cc_alg_[i].SetCopa(delta, false);
+      cc_alg_[i].SetCopaBeta1(delta, false);
     }
-    else if (cc_tok.substr(0, 8) == "DetCopa_")
+    else if (cc_tok.substr(0, 13) == "DetCopaBeta1_")
     {
-      double  delta = StringUtils::GetDouble(cc_tok.substr(8));
+      double  delta = StringUtils::GetDouble(cc_tok.substr(13));
 
-      if ((delta < kMinCopaConstDelta) || (delta > kMaxCopaConstDelta))
+      if ((delta < kMinCopaBeta1ConstDelta) ||
+          (delta > kMaxCopaBeta1ConstDelta))
       {
         return false;
       }
 
-      cc_alg_[i].SetCopa(delta, true);
+      cc_alg_[i].SetCopaBeta1(delta, true);
     }
-    else if (cc_tok == "Copa2")
+    else if (cc_tok == "CopaBeta2")
     {
-      cc_alg_[i].SetCopa2();
+      cc_alg_[i].SetCopaBeta2();
     }
-    else if (cc_tok == "Copa3")
+    else if (cc_tok == "Copa")
     {
-      cc_alg_[i].SetCopa3(anti_jitter);
+      cc_alg_[i].SetCopa(anti_jitter);
     }
     else if (cc_tok.substr(0, 10) == "FixedRate_")
     {

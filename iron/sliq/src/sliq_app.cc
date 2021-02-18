@@ -338,6 +338,29 @@ bool SliqApp::ConfigureTcpFriendliness(EndptId endpt_id, uint32_t num_flows)
 }
 
 //============================================================================
+bool SliqApp::ConfigureRttOutlierRejection(EndptId endpt_id, bool rtt_or)
+{
+  if (!initialized_)
+  {
+    LogE(kClassName, __func__, "Not initialized.\n");
+    return false;
+  }
+
+  // Find the connection.
+  Connection*  conn = connection_mgr_->GetConnection(endpt_id);
+
+  if (conn == NULL)
+  {
+    return false;
+  }
+
+  // Call into the connection to change the setting.
+  conn->ConfigureRttOutlierRejection(rtt_or);
+
+  return true;
+}
+
+//============================================================================
 bool SliqApp::ConfigureTransmitQueue(EndptId endpt_id, StreamId stream_id,
                                      size_t max_size_pkts,
                                      DequeueRule dequeue_rule,

@@ -5,8 +5,8 @@ digraph sliq_persist {
     blk1 [ shape = box,     label = "Process ACK pkt" ];
     blk2 [ shape = box,     label = "Stop persist timer" ];
     blk3 [ shape = box,     label = "Set num_persist = 0\nSet duration = min(INIT_PERSIST, MAX_PERSIST)\nSet duration = max(duration, MIN_PERSIST)\nStart persist timer for duration" ];
-    blk4 [ shape = box,     label = "Send data pkt with last sent seq, persist flag set, and no data\nSet num_persist = (num_persist + 1)\nSet duration = (INIT_PERSIST * (1 << num_persist))\nSet duration = min(duration, MAX_PERSIST)\nSet duration = max(duration, MIN_PERSIST)\nStart persist timer for duration" ];
-    dsc1 [ shape = diamond, label = "Is ACK pkt window size == 0 AND\npersist timer is not running?" ];
+    blk4 [ shape = box,     label = "Send data pkt with max sent seq, persist flag set, and no payload data\nSet num_persist = (num_persist + 1)\nSet duration = (INIT_PERSIST * (1 << num_persist))\nSet duration = min(duration, MAX_PERSIST)\nSet duration = max(duration, MIN_PERSIST)\nStart persist timer for duration" ];
+    dsc1 [ shape = diamond, label = "Is send window full AND\npersist timer is not running?" ];
 
     strt -> init;
     init -> redy;

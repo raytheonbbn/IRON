@@ -576,6 +576,12 @@ size_t EncodingState::AdmitPacket()
     has_mcast_dst_vec_ ? dst_vec = mcast_dst_vec_ :
       dst_vec = bin_map_.GetMcastDst(dst_bidx);
 
+    if (dst_vec == 0)
+    {
+      packet_pool_.Recycle(pkt);
+      return 0;
+    }
+
     pkt->set_dst_vec(dst_vec);
     LogD(kClassName, __func__, "Set packet %p w/ destination bit vector %X "
          "for bin %s\n", pkt, dst_vec, bin_map_.GetIdToLog(dst_bidx).c_str());
@@ -1072,7 +1078,7 @@ bool EncodingState::UpdateEncodingParams(int baseRate, int totalRate,
   {
     has_mcast_dst_vec_ = true;
   }
-  
+
   if (flow_controller_)
   {
     flow_controller_->UpdateEncodingRate(baseRate / totalRate);

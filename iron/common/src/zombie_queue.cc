@@ -156,8 +156,8 @@ Packet* ZombieQueue::Dequeue(uint32_t max_size_bytes, DstVec dst_vec)
 
   // Encode the local node's BinId in a fake IPv4 source address.
   BinId      node_bin_id  = bin_map_.GetPhyBinId(node_bin_index_);
-  in_addr_t  src_addr_nbo = htonl((static_cast<in_addr_t>(10) << 24) |
-                                  static_cast<in_addr_t>(node_bin_id));
+  in_addr_t  src_addr_nbo = htonl((static_cast<in_addr_t>(10 << 24) |
+				   node_bin_id));
 
   Packet* zombie = Zombie::CreateNewZombie(
     packet_pool_,

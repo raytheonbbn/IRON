@@ -35,22 +35,6 @@
  * SOFTWARE.
  */
 /* IRON: end */
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 //============================================================================
 
 #ifndef IRON_SLIQ_PRIVATE_DEFS_H
@@ -76,6 +60,7 @@ enum HeaderType
   ACK_HEADER                  = 33,
   CC_SYNC_HEADER              = 34,
   RCVD_PKT_CNT_HEADER         = 35,
+  CONN_MEAS_HEADER            = 36,
 
   // SLIQ specialized stand-alone headers.  Cannot be concatenated.
   CC_PKT_TRAIN_HEADER         = 40,
@@ -208,6 +193,31 @@ const size_t  kCcSyncHdrSize = 8;
 
 // The size of the received packet count header, in bytes.
 const size_t  kRcvdPktCntHdrSize = 12;
+
+
+// ================ SLIQ Connection Measurement Headers ================
+
+// The size of the base connection measurement header, in bytes.
+const size_t  kConnMeasHdrBaseSize = 4;
+
+// The size of the maximum remote-to-local one-way delay field, in bytes.
+const size_t  kConnMeasHdrMaxRtlOwdSize = 4;
+
+/// The SLIQ connection measurement header (partial).
+///
+/// \verbatim
+///  0                   1                   2                   3
+///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+/// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/// |     Type      |O|   Unused    |        Sequence Number        |
+/// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+struct connMeasFrontend
+{
+  uint8_t   type;
+  uint8_t   flags;
+  uint16_t  seq;
+} __attribute__((packed));
 
 
 //  ================ SLIQ Congestion Control Packet Train Headers ============

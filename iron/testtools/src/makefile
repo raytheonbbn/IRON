@@ -116,7 +116,6 @@ LIB_NAME = libtesttools.a
 LIB_SOURCE = failing_edge_if.cc \
              failing_virtual_tun.cc \
              packet_creator.cc \
-             packet_pool_heap.cc \
              port_number_mgr.cc \
              pseudo_edge_if.cc \
              pseudo_fifo.cc \

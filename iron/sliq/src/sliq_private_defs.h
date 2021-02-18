@@ -35,22 +35,6 @@
  * SOFTWARE.
  */
 /* IRON: end */
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 //============================================================================
 
 #ifndef IRON_SLIQ_PRIVATE_DEFS_H
@@ -209,6 +193,14 @@ namespace sliq
   // received packet count header will be sent by itself in a packet.
   const size_t  kRcvdPktCntIntPkts = 32;
 
+  // ================ SLIQ Connection Measurement Headers ================
+
+  // The size of the base connection measurement header, in bytes.
+  const size_t  kConnMeasHdrBaseSize = 4;
+
+  // The size of the maximum remote-to-local one-way delay field, in bytes.
+  const size_t  kConnMeasHdrMaxRtlOwdSize = 4;
+
   // ================ SLIQ CC Packet Train Headers ================
 
   // The size of the congestion control packet train header, in bytes.
@@ -241,10 +233,13 @@ namespace sliq
 
   // ================ SLIQ Forward Error Correction ================
 
-  /// The maximum FEC block length (source + encoded) in packets.  Set based
+  /// The maximum FEC group length (source + encoded) in packets.  Set based
   /// on the capabilities of the VdmFec class.  Cannot be greater than 32 due
   /// to the FecGroupPktBitVec type.
-  const size_t  kMaxFecBlockLengthPkts = 31;
+  const size_t  kMaxFecGroupLengthPkts = 31;
+
+  /// The minimum target packet receive probability.
+  const double  kMinTgtPktRcvProb = 0.95;
 
   /// The maximum target packet receive probability.
   const double  kMaxTgtPktRcvProb = 0.999;
@@ -254,8 +249,12 @@ namespace sliq
   /// definitions header file.
   const size_t  kMaxTgtPktDelRnds = 7;
 
-  /// The maximum packet delivery round value supported.
-  const FecRound  kMaxRnd = 255;
+  /// The round value used when the FEC group is either complete (all FEC
+  /// source packets have been ACKed) or is out of rounds (when the FEC
+  /// group's round number first exceeds the target number of rounds).  Must
+  /// be greater than kMaxTgtPktDelRnds yet still fit within the Data Header
+  /// Round Number field (currently a 4 bit field).
+  const FecRound  kOutOfRounds = 15;
 
   // ================ SLIQ Sockets ================
 

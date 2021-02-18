@@ -81,7 +81,7 @@ void ConfigInfo::Add(const string& key, const string& value)
     LogE(kClassName, __func__, "Bad argument. Missing key or value.\n");
     return;
   }
-  
+
   config_items_[key] = value;
 }
 
@@ -106,7 +106,7 @@ bool ConfigInfo::LoadFromFile(const string& file_name)
   char  line[1024];
   char  tok_a[1024];
   char  tok_b[1024];
-  
+
   while (::fgets(line, 1024, input_file) != NULL)
   {
     int line_len = ::strlen(line);
@@ -118,8 +118,17 @@ bool ConfigInfo::LoadFromFile(const string& file_name)
       //
       continue;
     }
-    
-    line[line_len - 1] = '\0';
+
+    if (line[line_len -1] == '\n')
+    {
+      line[line_len - 1] = '\0';
+    }
+    else
+    {
+      LogW(kClassName, __func__, "Input file %s missing final newline "
+           "character.\n", file_name.c_str());
+    }
+
     ::sscanf(line, "%s %s", tok_a, tok_b);
 
     if (::strcmp(tok_a, "include") == 0)
@@ -274,7 +283,7 @@ bool ConfigInfo::WriteToFile(const string& file_name) const
   //
 
   map<string, string>::const_iterator  it;
-  
+
   for (it  = config_items_.begin();
        it != config_items_.end();
        ++it)
@@ -294,7 +303,7 @@ string ConfigInfo::ToString() const
 {
   string                               result;
   map<string, string>::const_iterator  it;
-  
+
   result.append("\n");
   for (it  = config_items_.begin();
        it != config_items_.end();
@@ -317,7 +326,7 @@ string ConfigInfo::Get(const string& key,
   map<string, string>::const_iterator it;
 
   it = config_items_.find(key);
-  
+
   if (it != config_items_.end())
   {
     if (log_customizations &&
@@ -379,7 +388,7 @@ int ConfigInfo::GetInt(const string& key, const int default_value,
 
     return default_value;
   }
-  
+
   int to_return = StringUtils::GetInt(value, default_value);
   if (log_customizations && (to_return != default_value))
   {
@@ -407,7 +416,7 @@ unsigned int ConfigInfo::GetUint(const string& key,
 
     return default_value;
   }
-  
+
   unsigned int to_return = StringUtils::GetUint(value, default_value);
   if (log_customizations && (to_return != default_value))
   {
@@ -463,7 +472,7 @@ float ConfigInfo::GetFloat(const string& key, const float default_value,
 
     return default_value;
   }
-  
+
   float to_return = StringUtils::GetFloat(value, default_value);
   if (log_customizations && (to_return != default_value))
   {

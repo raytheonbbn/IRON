@@ -1,0 +1,4 @@
+{"objective":"reachableLANs",
+ "linkConstraints": {"minCapacity": 5000000, "maxLatency": 40000}}
+
+

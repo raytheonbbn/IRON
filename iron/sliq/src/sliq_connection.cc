@@ -35,22 +35,6 @@
  * SOFTWARE.
  */
 /* IRON: end */
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 //============================================================================
 
 #include "sliq_connection.h"
@@ -164,11 +148,11 @@ namespace
   /// milliseconds.
   const int           kPerMinTimeMsec = 2000;
 
-  /// The minimum Copa constant delta value.
-  const double        kMinCopaConstDelta = 0.004;
+  /// The minimum Copa Beta 1 constant delta value.
+  const double        kMinCopaBeta1ConstDelta = 0.004;
 
-  /// The maximum Copa constant delta value.
-  const double        kMaxCopaConstDelta = 1.0;
+  /// The maximum Copa Beta 1 constant delta value.
+  const double        kMaxCopaBeta1ConstDelta = 1.0;
 
   /// Connection handshake header message tag for "CH" (client hello).
   const MsgTag        kClientHelloTag = 0x4843;
@@ -213,6 +197,7 @@ CcAlgs::CcAlgs()
       chan_cap_est_bps(0.0),
       trans_cap_est_bps(0.0),
       ccl_time_sec(0.0),
+      send_rate_est_bps(0.0),
       num_cc_alg(0),
       cc_settings(),
       cc_alg()
@@ -274,7 +259,8 @@ Connection::Connection(SliqApp& app, SocketManager& socket_mgr,
       rmt_ts_delta_(0),
       num_rtt_pdd_samples_(0),
       rtt_pdd_samples_(NULL),
-      owd_(),
+      rtl_owd_(),
+      ltr_owd_(),
       do_close_conn_callback_(false),
       stats_rcv_rpc_hdr_(),
       stats_rcv_rpc_trigger_cnt_(0),
@@ -808,7 +794,7 @@ bool Connection::AddStream(StreamId stream_id, Priority prio,
   }
 
   // Store the stream using the stream ID as the index.
-  RecordNewStream(stream, stream_id, prio);
+  RecordNewStream(stream, stream_id, prio, rel);
 
   LogA(kClassName, __func__, "Conn %" PRISocketId ": Directly created stream "
        "ID %" PRIStreamId " with: delivery %d reliability %d rexmit_limit %"
@@ -847,6 +833,13 @@ bool Connection::ConfigureTcpFriendliness(uint32_t num_flows)
   }
 
   return rv;
+}
+
+//============================================================================
+void Connection::ConfigureRttOutlierRejection(bool enable_rtt_or)
+{
+  // Change the setting in the RTT manager.
+  rtt_mgr_.ConfigureRttOutlierRejection(enable_rtt_or);
 }
 
 //============================================================================
@@ -1594,6 +1587,13 @@ WriteResult Connection::SendDataPkt(const Time& now, DataHeader& data_hdr,
     AddRcvdPktCnt(rsvd_len, hdrs);
   }
 
+  // Decide if a connection measurement header can be opportunistically
+  // included or not.
+  if (rtl_owd_.send_max_rtl_owd_ && (now >= rtl_owd_.next_max_rtl_send_time_))
+  {
+    AddConnMeas(now, rsvd_len, hdrs);
+  }
+
   // Get the timestamp and timestamp delta values for the data header.
   data_hdr.timestamp       = GetCurrentLocalTimestamp();
   data_hdr.timestamp_delta = ts_delta_;
@@ -1669,9 +1669,9 @@ WriteResult Connection::SendDataPkt(const Time& now, DataHeader& data_hdr,
     if (data_hdr.fec_flag)
     {
       LogD(kClassName, __func__, "  fec: pkt_type %s grp %" PRIFecGroupId
-           " idx %" PRIFecBlock " src %" PRIFecBlock " rnd %" PRIFecRound
+           " idx %" PRIFecSize " src %" PRIFecSize " rnd %" PRIFecRound
            "\n", ((data_hdr.fec_pkt_type == FEC_SRC_PKT) ? "SRC" : "ENC"),
-           data_hdr.fec_group_id, data_hdr.fec_block_index,
+           data_hdr.fec_group_id, data_hdr.fec_group_index,
            data_hdr.fec_num_src, data_hdr.fec_round);
     }
     if (data_hdr.enc_pkt_len_flag)
@@ -1835,7 +1835,7 @@ void Connection::UpdateCapacityEstimate(const Time& now, CcId cc_id,
   }
 
   size_t  cwnd         = cc_alg->GetCongestionWindow();
-  double  rate_est_bps = static_cast<double>(cc_alg->CapacityEstimate());
+  double  rate_est_bps = static_cast<double>(cc_alg->SendRate());
   double  chan_ce_bps  = 0.0;
   double  trans_ce_bps = 0.0;
   double  ccl_time_sec = 0.0;
@@ -1846,8 +1846,9 @@ void Connection::UpdateCapacityEstimate(const Time& now, CcId cc_id,
         is_in_outage_, chan_ce_bps, trans_ce_bps, ccl_time_sec))
   {
 #ifdef SLIQ_CC_DEBUG
-    LogD(kClassName, __func__, "Conn %" PRISocketId ": PLT_CAPEST %f %f\n",
-         socket_id_, cc_algs_.chan_cap_est_bps, cc_algs_.trans_cap_est_bps);
+    LogD(kClassName, __func__, "Conn %" PRISocketId ": PLT_CAPEST %f %f %f\n",
+         socket_id_, cc_algs_.chan_cap_est_bps, cc_algs_.trans_cap_est_bps,
+         cc_algs_.send_rate_est_bps);
 #endif
 
     // Record the capacity estimate callback information to perform when SLIQ
@@ -1857,9 +1858,25 @@ void Connection::UpdateCapacityEstimate(const Time& now, CcId cc_id,
     cc_algs_.trans_cap_est_bps = trans_ce_bps;
     cc_algs_.ccl_time_sec      = ccl_time_sec;
 
+    // Update the send rate estimate for the connection.
+    double  send_rate_bps = 0.0;
+
+    for (size_t i = 0; i < cc_algs_.num_cc_alg; ++i)
+    {
+      CongCtrlInterface*  cc_alg2 = cc_algs_.cc_alg[i].cc_alg;
+
+      if (cc_alg2 != NULL)
+      {
+        send_rate_bps += static_cast<double>(cc_alg2->SendRate());
+      }
+    }
+
+    cc_algs_.send_rate_est_bps = send_rate_bps;
+
 #ifdef SLIQ_CC_DEBUG
-    LogD(kClassName, __func__, "Conn %" PRISocketId ": PLT_CAPEST %f %f\n",
-         socket_id_, cc_algs_.chan_cap_est_bps, cc_algs_.trans_cap_est_bps);
+    LogD(kClassName, __func__, "Conn %" PRISocketId ": PLT_CAPEST %f %f %f\n",
+         socket_id_, cc_algs_.chan_cap_est_bps, cc_algs_.trans_cap_est_bps,
+         cc_algs_.send_rate_est_bps);
 #endif
   }
 }
@@ -1883,14 +1900,13 @@ PktTimestamp Connection::GetCurrentLocalTimestamp()
 }
 
 //============================================================================
-double Connection::GetOneWayDelayEst(PktTimestamp send_ts,
-                                     const Time& recv_time)
+double Connection::GetRtlOwdEst(PktTimestamp send_ts, const Time& recv_time)
 {
   double  owd_est_sec = 0.0;
 
-  // If the one-way delay estimate is not ready yet, then use one-half of the
-  // current smoothed RTT estimate.
-  if (!owd_.cur_ready_)
+  // If the remote-to-local one-way delay estimate is not ready yet, then use
+  // one-half of the current smoothed RTT estimate.
+  if (!rtl_owd_.cur_ready_)
   {
     Time    srtt     = rtt_mgr_.smoothed_rtt();
     double  srtt_sec = srtt.ToDouble();
@@ -1915,19 +1931,19 @@ double Connection::GetOneWayDelayEst(PktTimestamp send_ts,
 
   if (send_ts != 0)
   {
-    local_delta          = (static_cast<int32_t>(recv_ts) -
-                            static_cast<int32_t>(send_ts));
-    owd_.prev_pkt_delta_ = local_delta;
+    local_delta              = (static_cast<int32_t>(recv_ts) -
+                                static_cast<int32_t>(send_ts));
+    rtl_owd_.prev_pkt_delta_ = local_delta;
   }
   else
   {
-    local_delta = owd_.prev_pkt_delta_;
+    local_delta = rtl_owd_.prev_pkt_delta_;
   }
 
   // The one-way delay estimate is:
   //   OWD = (0.5 * MinRTT) + MAX((local_delta - min_local_delta), 0)
-  Time     owd_est = owd_.cur_min_rtt_.Multiply(0.5);
-  int64_t  add_del = (local_delta - owd_.cur_min_local_delta_);
+  Time     owd_est = rtl_owd_.cur_min_rtt_.Multiply(0.5);
+  int64_t  add_del = (local_delta - rtl_owd_.cur_min_local_delta_);
 
   if (add_del > 0)
   {
@@ -1940,7 +1956,8 @@ double Connection::GetOneWayDelayEst(PktTimestamp send_ts,
   LogD(kClassName, __func__, "Conn %" PRISocketId ": OWD est %f (recv_ts=%"
        PRIu32 " send_ts=%" PRIu32 " delta=%" PRId64 " min_rtt=%f "
        "min_delta=%" PRId64 ").\n", socket_id_, owd_est_sec, recv_ts, send_ts,
-       local_delta, owd_.cur_min_rtt_.ToDouble(), owd_.cur_min_local_delta_);
+       local_delta, rtl_owd_.cur_min_rtt_.ToDouble(),
+       rtl_owd_.cur_min_local_delta_);
 #endif
 
   return owd_est_sec;
@@ -2565,6 +2582,13 @@ bool Connection::SendCcSyncPkt(CcId cc_id, uint16_t cc_sync_seq_num,
     AddRcvdPktCnt(0, pkt);
   }
 
+  // Decide if a connection measurement header can be opportunistically
+  // included or not.
+  if (rtl_owd_.send_max_rtl_owd_ && (now >= rtl_owd_.next_max_rtl_send_time_))
+  {
+    AddConnMeas(now, 0, pkt);
+  }
+
   // Send the packet to the peer.
   WriteResult  wr = socket_mgr_.WritePacket(socket_id_, *pkt, peer_addr_);
 
@@ -2714,7 +2738,7 @@ void Connection::ReceivePackets()
         // Only data, ACK, CC sync, and received packet count headers may be
         // consolidated.
         if ((offset > 0) && ((hdr_type < DATA_HEADER) ||
-                             (hdr_type > RCVD_PKT_CNT_HEADER)))
+                             (hdr_type > CONN_MEAS_HEADER)))
         {
           LogE(kClassName, __func__, "Conn %" PRISocketId ": Cannot "
                "consolidate header type %d.\n", socket_id_, hdr_type);
@@ -2870,10 +2894,10 @@ void Connection::ReceivePackets()
               if (data_hdr.fec_flag)
               {
                 LogD(kClassName, __func__, "  fec: pkt_type %s grp %"
-                     PRIFecGroupId " idx %" PRIFecBlock " src %" PRIFecBlock
+                     PRIFecGroupId " idx %" PRIFecSize " src %" PRIFecSize
                      " rnd %" PRIFecRound "\n",
                      ((data_hdr.fec_pkt_type == FEC_SRC_PKT) ? "SRC" : "ENC"),
-                     data_hdr.fec_group_id, data_hdr.fec_block_index,
+                     data_hdr.fec_group_id, data_hdr.fec_group_index,
                      data_hdr.fec_num_src, data_hdr.fec_round);
               }
               if (data_hdr.enc_pkt_len_flag)
@@ -2972,7 +2996,7 @@ void Connection::ReceivePackets()
                 UpdateTimestampState(rcv_time, ack_hdr_.timestamp,
                                      ack_hdr_.timestamp_delta);
 
-                ProcessAck(ack_hdr_, src, rcv_time);
+                ProcessAck(ack_hdr_, rcv_time);
 
                 ack_cnt++;
                 ack_stream_mask |= (static_cast<uint64_t>(0x1) <<
@@ -3031,6 +3055,30 @@ void Connection::ReceivePackets()
 #endif
 
               ProcessRcvdPktCntInfo(rpc_hdr, rcv_time);
+            }
+
+            break;
+          }
+
+          case CONN_MEAS_HEADER:
+          {
+            ConnMeasHeader  cm_hdr;
+
+            if (framer_.ParseConnMeasHeader(pkt, offset, cm_hdr))
+            {
+#ifdef SLIQ_DEBUG
+              LogD(kClassName, __func__, "Conn %" PRISocketId ": Received "
+                   "connection measurement packet: owd %s seq %" PRIu16 "\n",
+                   socket_id_, (cm_hdr.owd_flag ? "true" : "false"),
+                   cm_hdr.sequence_number);
+              if (cm_hdr.owd_flag)
+              {
+                LogD(kClassName, __func__, "  max_rtl_owd %" PRIu32 "\n",
+                     cm_hdr.max_rmt_to_loc_owd);
+              }
+#endif
+
+              ProcessConnMeasInfo(cm_hdr);
             }
 
             break;
@@ -3533,7 +3581,7 @@ void Connection::ProcessServerHello(ConnHndshkHeader& hdr,
 
     Time  rtt = Time::FromUsec(delta);
 
-    rtt_mgr_.UpdateRtt(socket_id_, rtt);
+    rtt_mgr_.UpdateRtt(now, socket_id_, rtt);
 
     if (num_rtt_pdd_samples_ < kMaxRttPddSamples)
     {
@@ -3655,7 +3703,7 @@ void Connection::ProcessClientConfirm(ConnHndshkHeader& hdr,
 
   Time  rtt = Time::FromUsec(delta);
 
-  rtt_mgr_.UpdateRtt(socket_id_, rtt);
+  rtt_mgr_.UpdateRtt(now, socket_id_, rtt);
 
   if (num_rtt_pdd_samples_ < kMaxRttPddSamples)
   {
@@ -3996,7 +4044,7 @@ void Connection::ProcessCreateStream(CreateStreamHeader& hdr,
     else
     {
       // Store the stream using the stream ID as the index.
-      RecordNewStream(stream, stream_id, hdr.priority);
+      RecordNewStream(stream, stream_id, hdr.priority, rel);
 
       LogA(kClassName, __func__, "Conn %" PRISocketId ": Implicitly created "
            "stream ID %" PRIStreamId " with: delivery %d reliable %d prio %"
@@ -4227,8 +4275,7 @@ bool Connection::IsGoodAckPacket(AckHeader& hdr, const Ipv4Endpoint& src)
 }
 
 //============================================================================
-void Connection::ProcessAck(AckHeader& hdr, const Ipv4Endpoint& src,
-                            const Time& rcv_time)
+void Connection::ProcessAck(AckHeader& hdr, const Time& rcv_time)
 {
   // Find the stream.
   Stream*  stream = GetStream(hdr.stream_id);
@@ -4360,6 +4407,41 @@ void Connection::ProcessImplicitAcks(uint64_t ack_stream_mask)
 void Connection::ProcessRcvdPktCntInfo(RcvdPktCntHeader& hdr,
                                        const Time& rcv_time)
 {
+  // The received packet count headers are used for accurately computing the
+  // packet error rate (PER) estimate at each end of the connection, which is
+  // stored in the stats_local_per_ member.  These headers are used to compute
+  // the PER as follows:
+  // - Each Connection object maintains a sent packet count, stored in
+  //   stats_snd_data_pkts_sent_.
+  // - When a data packet is sent, the sent packet count is incremented and
+  //   its value at the time of the send is stored in the associated Stream's
+  //   SentPktManager with the other information for the data packet.
+  // - Each Connection object maintains a received packet count header called
+  //   stats_rcv_rpc_hdr_.
+  // - When a data packet is received, the data packet's stream ID,
+  //   retransmission count, and sequence number are copied into
+  //   stats_rcv_rpc_hdr_, and the received data packet count field in
+  //   stats_rcv_rpc_hdr_ is incremented by one.  The member
+  //   stats_rcv_rpc_trigger_cnt_ is also incremented by one.
+  // - When stats_rcv_rpc_trigger_cnt_ becomes large enough, the received
+  //   packet count header stored in stats_rcv_rpc_hdr_ is sent back to the
+  //   other endpoint and stats_rcv_rpc_trigger_cnt_ is reset to zero.
+  // - When a received packet count header is received, the sent packet count
+  //   for the data packet referenced in the header is looked up using its
+  //   stream ID, retransmission count, and sequence number.
+  // - The PER is then computed using the difference in data packet sent and
+  //   received counts since the last received packet count header was
+  //   received.  The members stats_snd_start_pkts_sent_ and
+  //   stats_snd_start_pkts_rcvd_ are used to store the counts from the
+  //   previous header processing.
+  // - The stats_snd_per_update_time_ member is used to make sure that the PER
+  //   estimate is not updated too frequently, as the packet counts need to be
+  //   sufficiently large to get an accurate PER estimate.  This member is
+  //   also used to reset the packet count processing after an outage is over.
+  // - The stats_last_rpc_ member is used to store the last processed header's
+  //   received data packet count, which is a monotonically increasing number,
+  //   in order to make sure that old or duplicate headers are ignored.
+
   // Ignore duplicates.  If the received data packet count is not greater than
   // the last one received, then this must be a duplicate.
   if ((!stats_snd_per_update_time_.IsZero()) &&
@@ -4449,6 +4531,29 @@ void Connection::ProcessRcvdPktCntInfo(RcvdPktCntHeader& hdr,
          "interval, sent %" PRIPktCount " rcvd %" PRIPktCount ".\n",
          socket_id_, stats_snd_start_pkts_sent_, stats_snd_start_pkts_rcvd_);
 #endif
+  }
+}
+
+//============================================================================
+void Connection::ProcessConnMeasInfo(ConnMeasHeader& hdr)
+{
+  // Process the received connection measurements.
+  if (hdr.owd_flag)
+  {
+    // Ignore old connection measurements.
+    if ((!ltr_owd_.init_) ||
+        (static_cast<int16_t>(hdr.sequence_number -
+                              ltr_owd_.cm_hdr_seq_) > 0))
+    {
+      ltr_owd_.init_        = true;
+      ltr_owd_.cm_hdr_seq_  = hdr.sequence_number;
+      ltr_owd_.max_ltr_owd_ = Time::FromUsec(hdr.max_rmt_to_loc_owd);
+
+#ifdef SLIQ_DEBUG
+      LogD(kClassName, __func__, "Conn %" PRISocketId ": Updated max L2R OWD "
+           "%f\n", socket_id_, ltr_owd_.max_ltr_owd_.ToDouble());
+#endif
+    }
   }
 }
 
@@ -4761,6 +4866,13 @@ void Connection::SendAck(const Time& now, CcId cc_id,
     AddRcvdPktCnt(0, pkt);
   }
 
+  // Decide if a connection measurement header can be opportunistically
+  // included or not.
+  if (rtl_owd_.send_max_rtl_owd_ && (now >= rtl_owd_.next_max_rtl_send_time_))
+  {
+    AddConnMeas(now, 0, pkt);
+  }
+
   // Send the ACK packet.
   if (pkt != NULL)
   {
@@ -4829,6 +4941,57 @@ void Connection::AddRcvdPktCnt(size_t rsvd_len, Packet*& pkt)
 
     // Reset the trigger counter.
     stats_rcv_rpc_trigger_cnt_ = 0;
+  }
+}
+
+//============================================================================
+void Connection::AddConnMeas(const Time& now, size_t rsvd_len, Packet*& pkt)
+{
+  // Check if there is a current maximum remote-to-local one-way delay to
+  // send.
+  Time  max_rtl_owd = rtt_mgr_.maximum_rtl_owd();
+
+  if (max_rtl_owd.IsZero())
+  {
+    return;
+  }
+
+  // Check if a connection measurement header will fit, and if so, add it.
+  size_t  curr_len = (rsvd_len +
+                      ((pkt != NULL) ? pkt->GetLengthInBytes() : 0));
+
+  if ((curr_len + kConnMeasHdrBaseSize + kConnMeasHdrMaxRtlOwdSize) <=
+      kMaxPacketSize)
+  {
+    ConnMeasHeader  conn_meas_hdr(true, rtl_owd_.next_cm_hdr_seq_,
+                                  max_rtl_owd.GetTimeInUsec());
+
+    if (!framer_.AppendConnMeasHeader(pkt, conn_meas_hdr))
+    {
+      LogE(kClassName, __func__, "Conn %" PRISocketId ": Error appending "
+           "connection measurement header.\n", socket_id_);
+      return;
+    }
+
+#ifdef SLIQ_DEBUG
+    LogD(kClassName, __func__, "Conn %" PRISocketId ": Add opportunistic "
+         "connection measurement: owd true seq %" PRIu16 " max_rtl_owd %"
+         PRIu32 "\n", socket_id_, rtl_owd_.next_cm_hdr_seq_,
+         static_cast<uint32_t>(max_rtl_owd.GetTimeInUsec()));
+#endif
+
+    // Update the next send time and the next sequence number.  If the
+    // interval to use is not available yet, then use a reasonable interval (2
+    // seconds) instead.
+    Time  intv = rtt_mgr_.max_min_filter_interval();
+
+    if (intv.IsZero())
+    {
+      intv = Time(2, 0);
+    }
+
+    rtl_owd_.next_max_rtl_send_time_ = (now + intv);
+    ++rtl_owd_.next_cm_hdr_seq_;
   }
 }
 
@@ -5918,7 +6081,7 @@ bool Connection::SetFastRto()
   //
   // These are needed when a congestion control algorithm that has a
   // congestion window and is designed to operate with non-congestion packet
-  // losses (e.g. Copa2 or Copa3) has a small congestion window size, which
+  // losses (e.g. Copa or CopaBeta2) has a small congestion window size, which
   // can lead to send blockages when not enough ACK packets are being received
   // to send the necessary retransmissions.  The only way out of these send
   // blockages is using the RTO timer, and making these occur quicker helps
@@ -6020,92 +6183,98 @@ void Connection::UpdateTimestampState(Time& recv_time, PktTimestamp send_ts,
          "\n", socket_id_, ts_delta_, local_delta, remote_delta);
 #endif
 
-    if (owd_.next_delta_cnt_ == 0)
+    if (rtl_owd_.next_delta_cnt_ == 0)
     {
       // Start of a new sampling period.
-      owd_.next_delta_cnt_        = 1;
-      owd_.next_min_local_delta_  = local_delta;
-      owd_.next_min_remote_delta_ = remote_delta;
+      rtl_owd_.next_delta_cnt_        = 1;
+      rtl_owd_.next_min_local_delta_  = local_delta;
+      rtl_owd_.next_min_remote_delta_ = remote_delta;
 
       // Compute the end time for this period.
-      owd_.next_end_time_ = (Time::Now() + Time(kOwdPeriodSec));
+      rtl_owd_.next_end_time_ = (Time::Now() + Time(kOwdPeriodSec));
 
       // If this is the first period, then set initial values for the
       // parameters used for adjusting the TTG values.
-      if (!owd_.cur_ready_)
+      if (!rtl_owd_.cur_ready_)
       {
-        owd_.cur_ready_           = true;
-        owd_.cur_min_rtt_         = Time::FromUsec(local_delta +
-                                                   remote_delta);
-        owd_.cur_min_local_delta_ = local_delta;
+        rtl_owd_.cur_ready_           = true;
+        rtl_owd_.cur_min_rtt_         = Time::FromUsec(local_delta +
+                                                       remote_delta);
+        rtl_owd_.cur_min_local_delta_ = local_delta;
       }
 
 #ifdef SLIQ_DEBUG
       LogD(kClassName, __func__, "Conn %" PRISocketId ": Sampling period "
            "start local_delta=%" PRId64 " remote_delta=%" PRId64
            " cur_min_rtt=%f cur_min_local_delta=%" PRId64 "\n", socket_id_,
-           local_delta, remote_delta, 0, owd_.cur_min_rtt_.ToDouble(),
-           owd_.cur_min_local_delta_);
+           local_delta, remote_delta, 0, rtl_owd_.cur_min_rtt_.ToDouble(),
+           rtl_owd_.cur_min_local_delta_);
 #endif
     }
     else
     {
       // Update the minimum delta values observed.
-      owd_.next_delta_cnt_++;
+      rtl_owd_.next_delta_cnt_++;
 
-      if (local_delta < owd_.next_min_local_delta_)
+      if (local_delta < rtl_owd_.next_min_local_delta_)
       {
-        owd_.next_min_local_delta_ = local_delta;
+        rtl_owd_.next_min_local_delta_ = local_delta;
       }
 
-      if (remote_delta < owd_.next_min_remote_delta_)
+      if (remote_delta < rtl_owd_.next_min_remote_delta_)
       {
-        owd_.next_min_remote_delta_ = remote_delta;
+        rtl_owd_.next_min_remote_delta_ = remote_delta;
       }
 
 #ifdef SLIQ_DEBUG
       LogD(kClassName, __func__, "Conn %" PRISocketId ": Sample local_delta=%"
            PRId64 " remote_delta=%" PRId64 " next_min_local_delta=%" PRId64
            " next_min_remote_delta=%" PRId64 "\n", socket_id_, local_delta,
-           remote_delta, owd_.next_min_local_delta_,
-           owd_.next_min_remote_delta_);
+           remote_delta, rtl_owd_.next_min_local_delta_,
+           rtl_owd_.next_min_remote_delta_);
 #endif
 
       // Check if it is the end of the current period.
-      if ((owd_.next_delta_cnt_ >= kOwdPeriodMinSamples) &&
-          (Time::Now() >= owd_.next_end_time_))
+      if ((rtl_owd_.next_delta_cnt_ >= kOwdPeriodMinSamples) &&
+          (Time::Now() >= rtl_owd_.next_end_time_))
       {
         // The current period is over.  Update the parameters used for
         // adjusting the TTG values.
-        int64_t min_rtt = (owd_.next_min_local_delta_ +
-                           owd_.next_min_remote_delta_);
+        int64_t min_rtt = (rtl_owd_.next_min_local_delta_ +
+                           rtl_owd_.next_min_remote_delta_);
 
         if (min_rtt < 0)
         {
           min_rtt = -min_rtt;
         }
 
-        owd_.cur_ready_           = true;
-        owd_.cur_min_rtt_         = Time::FromUsec(min_rtt);
-        owd_.cur_min_local_delta_ = owd_.next_min_local_delta_;
+        rtl_owd_.cur_ready_           = true;
+        rtl_owd_.cur_min_rtt_         = Time::FromUsec(min_rtt);
+        rtl_owd_.cur_min_local_delta_ = rtl_owd_.next_min_local_delta_;
 
         // Reset to start another sampling period.
-        owd_.next_delta_cnt_ = 0;
+        rtl_owd_.next_delta_cnt_ = 0;
 
 #ifdef SLIQ_DEBUG
         LogD(kClassName, __func__, "Conn %" PRISocketId ": Sampling period "
              "end cur_min_rtt %f cur_min_local_delta %" PRId64 "\n",
-             socket_id_, owd_.cur_min_rtt_.ToDouble(),
-             owd_.cur_min_local_delta_);
+             socket_id_, rtl_owd_.cur_min_rtt_.ToDouble(),
+             rtl_owd_.cur_min_local_delta_);
 #endif
       }
     }
+
+    // Get the OWD estimate and add it to the RTT manager.
+    double  owd_est = GetRtlOwdEst(send_ts, recv_time);
+    Time    owd_obj(owd_est);
+
+    rtt_mgr_.UpdateRmtToLocOwd(recv_time, socket_id_, owd_obj);
   }
 }
 
 //============================================================================
 void Connection::RecordNewStream(Stream* stream, StreamId stream_id,
-                                 Priority prio)
+                                 Priority prio, const Reliability& rel)
 {
   // Store the stream using the stream ID as the index.
   stream_info_[stream_id].stream           = stream;
@@ -6145,6 +6314,13 @@ void Connection::RecordNewStream(Stream* stream, StreamId stream_id,
 
   prio_info_.num_streams = offset;
   prio_info_.num_bands   = band;
+
+  // If the reliability settings require the maximum local-to-remote one-way
+  // delay estimates, then enable sending them.
+  if ((rel.mode == SEMI_RELIABLE_ARQ_FEC) && rel.fec_del_time_flag)
+  {
+    rtl_owd_.send_max_rtl_owd_ = true;
+  }
 }
 
 //============================================================================
@@ -6202,7 +6378,7 @@ bool Connection::ReliabilityIsValid(
 
     case SEMI_RELIABLE_ARQ_FEC:
       return ((del_mode == UNORDERED_DELIVERY) &&
-              (rel.fec_target_pkt_recv_prob > 0.0) &&
+              (rel.fec_target_pkt_recv_prob >= kMinTgtPktRcvProb) &&
               (rel.fec_target_pkt_recv_prob <= kMaxTgtPktRcvProb) &&
               ((rel.fec_del_time_flag) ||
                ((rel.fec_target_pkt_del_rounds >= 1) &&
@@ -6238,7 +6414,7 @@ bool Connection::CongCtrlSettingIsValid(CongCtrl& alg,
       {
         alg.deterministic_copa = false;
         alg.copa_delta         = 0.0;
-        alg.copa3_anti_jitter  = 0.0;
+        alg.copa_anti_jitter   = 0.0;
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
@@ -6251,7 +6427,7 @@ bool Connection::CongCtrlSettingIsValid(CongCtrl& alg,
       {
         alg.deterministic_copa = false;
         alg.copa_delta         = 0.0;
-        alg.copa3_anti_jitter  = 0.0;
+        alg.copa_anti_jitter   = 0.0;
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
@@ -6265,40 +6441,40 @@ bool Connection::CongCtrlSettingIsValid(CongCtrl& alg,
         alg.cubic_reno_pacing  = false;
         alg.deterministic_copa = false;
         alg.copa_delta         = 0.0;
-        alg.copa3_anti_jitter  = 0.0;
+        alg.copa_anti_jitter   = 0.0;
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
            "control: Cubic\n", socket_id_);
       return true;
 
-    case COPA_CONST_DELTA_CC:
-      if ((alg.copa_delta < kMinCopaConstDelta) ||
-          (alg.copa_delta > kMaxCopaConstDelta))
+    case COPA1_CONST_DELTA_CC:
+      if ((alg.copa_delta < kMinCopaBeta1ConstDelta) ||
+          (alg.copa_delta > kMaxCopaBeta1ConstDelta))
       {
         return false;
       }
       if (allow_updates)
       {
         alg.cubic_reno_pacing = false;
-        alg.copa3_anti_jitter = 0.0;
+        alg.copa_anti_jitter  = 0.0;
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
-           "control: %sCopa %0.3f\n", socket_id_,
+           "control: %sCopa Beta 1 %0.3f\n", socket_id_,
            (alg.deterministic_copa ? "Deterministic " : ""), alg.copa_delta);
       return true;
 
-    case COPA_M_CC:
+    case COPA1_M_CC:
       if (allow_updates)
       {
         alg.cubic_reno_pacing = false;
         alg.copa_delta        = 0.0;
-        alg.copa3_anti_jitter = 0.0;
+        alg.copa_anti_jitter  = 0.0;
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
-           "control: %sCopa M\n", socket_id_,
+           "control: %sCopa Beta 1 M\n", socket_id_,
            (alg.deterministic_copa ? "Deterministic " : ""));
       return true;
 
@@ -6308,14 +6484,14 @@ bool Connection::CongCtrlSettingIsValid(CongCtrl& alg,
         alg.cubic_reno_pacing  = false;
         alg.deterministic_copa = false;
         alg.copa_delta         = 0.0;
-        alg.copa3_anti_jitter  = 0.0;
+        alg.copa_anti_jitter   = 0.0;
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
-           "control: Copa2\n", socket_id_);
+           "control: Copa Beta 2\n", socket_id_);
       return true;
 
-    case COPA3_CC:
+    case COPA_CC:
       if (allow_updates)
       {
         alg.cubic_reno_pacing  = false;
@@ -6324,7 +6500,7 @@ bool Connection::CongCtrlSettingIsValid(CongCtrl& alg,
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
-           "control: Copa3\n", socket_id_);
+           "control: Copa\n", socket_id_);
       return true;
 
     case FIXED_RATE_TEST_CC:
@@ -6340,7 +6516,7 @@ bool Connection::CongCtrlSettingIsValid(CongCtrl& alg,
         alg.cubic_reno_pacing  = false;
         alg.deterministic_copa = false;
         alg.copa_delta         = 0.0;
-        alg.copa3_anti_jitter  = 0.0;
+        alg.copa_anti_jitter   = 0.0;
       }
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using congestion "
@@ -6355,14 +6531,14 @@ bool Connection::CongCtrlSettingIsValid(CongCtrl& alg,
       }
 
       // Set the default congestion control to use.
-      alg.algorithm          = COPA3_CC;
+      alg.algorithm          = COPA_CC;
       alg.cubic_reno_pacing  = false;
       alg.deterministic_copa = false;
       alg.copa_delta         = 0.0;
-      alg.copa3_anti_jitter  = 0.0;
+      alg.copa_anti_jitter   = 0.0;
 
       LogI(kClassName, __func__, "Conn %" PRISocketId ": Using default "
-           "congestion control: Copa3\n", socket_id_);
+           "congestion control: Copa\n", socket_id_);
       return true;
 
     default:
@@ -6399,30 +6575,31 @@ const char* Connection::CongCtrlAlgToString(const CongCtrl& alg) const
     case TCP_CUBIC_CC:
       return "TCP CUBIC";
 
-    case COPA_CONST_DELTA_CC:
+    case COPA1_CONST_DELTA_CC:
       if (alg.deterministic_copa)
       {
-        snprintf(tmp_str, sizeof(tmp_str), "Deterministic Copa %0.3f",
+        snprintf(tmp_str, sizeof(tmp_str), "Deterministic Copa Beta 1 %0.3f",
                  alg.copa_delta);
       }
       else
       {
-        snprintf(tmp_str, sizeof(tmp_str), "Copa %0.3f", alg.copa_delta);
+        snprintf(tmp_str, sizeof(tmp_str), "Copa Beta 1 %0.3f",
+                 alg.copa_delta);
       }
       return tmp_str;
 
-    case COPA_M_CC:
+    case COPA1_M_CC:
       if (alg.deterministic_copa)
       {
-        return "Deterministic Copa M";
+        return "Deterministic Copa Beta 1 M";
       }
-      return "Copa M";
+      return "Copa Beta 1 M";
 
     case COPA2_CC:
-      return "Copa2";
+      return "Copa Beta 2";
 
-    case COPA3_CC:
-      return "Copa3";
+    case COPA_CC:
+      return "Copa";
 
     case FIXED_RATE_TEST_CC:
       snprintf(tmp_str, sizeof(tmp_str), "Fixed Rate %" PRICapacity " bps",

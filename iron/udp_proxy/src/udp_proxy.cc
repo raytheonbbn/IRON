@@ -224,19 +224,22 @@ double UdpProxy::ReleaseRecord::ReleaseFecState(FecState& fec_state)
     circ_release_hist_[i % kDefaultHistorySizePkts] = 1;
   }
 
-  uint64_t inc_bytes_srced = 0;
-  if (highest_num_bytes_ == fec_state.bytes_sourced())
+  // This calculation only includes bytes received or lost since the last
+  // call.
+  uint64_t  inc_bytes_srced = fec_state.bytes_sourced() - highest_num_bytes_;
+  uint64_t  inc_bytes_lost  = inc_bytes_srced - fec_state.bytes_released();
+  double    inc_loss_rate = 0.0;
+  if (inc_bytes_srced != 0)
   {
-    inc_bytes_srced = fec_state.bytes_sourced();
-  }
-  else
-  {
-    inc_bytes_srced = fec_state.bytes_sourced() - highest_num_bytes_;
+    inc_loss_rate = (static_cast<double>(inc_bytes_lost)/inc_bytes_srced);
   }
 
-  uint64_t inc_bytes_lost  = inc_bytes_srced - fec_state.bytes_released();
   avg_byte_loss_rate_      = avg_byte_loss_rate_*(1 - alpha_) +
-    (static_cast<double>(inc_bytes_lost)/inc_bytes_srced)*alpha_;
+    (inc_loss_rate*alpha_);
+
+  LogD(cn, __func__, "inc_bytes_srced: %" PRIu64 ", inc_bytes_lost: %" PRIu64
+       ", inc_loss_rate: %f, avg_byte_loss_rate: %f\n", inc_bytes_srced,
+       inc_bytes_lost, inc_loss_rate, avg_byte_loss_rate_);
 
   highest_num_packets_ = fec_state.max_pkt_sn();
   highest_num_bytes_   = fec_state.bytes_sourced();
@@ -541,6 +544,13 @@ bool UdpProxy::Configure(ConfigInfo& ci, const char* prefix)
   {
     LogF(cn, __func__, "Unable to initialize release records array.\n");
     return false;
+  }
+  BinIndex  dst_bin_idx = kInvalidBinIndex;
+  for (bool dst_bin_idx_valid = bin_map_shm_.GetFirstBinIndex(dst_bin_idx);
+       dst_bin_idx_valid;
+       dst_bin_idx_valid = bin_map_shm_.GetNextBinIndex(dst_bin_idx))
+  {
+    release_records_[dst_bin_idx].Initialize(kRecordsHashTableBuckets);
   }
 
   // Initialize the state shared by the NORM flow controllers.
@@ -1340,7 +1350,7 @@ FECContext* UdpProxy::ParseService(char* command, FECActionType action,
 
   string  token;
   bool    isMulticast = false;
-  
+
   if (is_flow_defn)
   {
     LogD(cn, __func__, "Flow definition : %s\n", command);
@@ -1358,7 +1368,7 @@ FECContext* UdpProxy::ParseService(char* command, FECActionType action,
     // Grab the fourth token (dst addr) in case this is a multicast flow
     string  dstAddr_str;
     tokens.Pop(dstAddr_str);
-    
+
     /// Check to see if the destinaton address is a multicast address
     iron::Ipv4Address dstAddr = dstAddr_str;
     isMulticast               = dstAddr.IsMulticast();
@@ -1604,7 +1614,7 @@ FECContext* UdpProxy::ParseService(char* command, FECActionType action,
 	// Make sure this is for a flow definition
 	if (!is_flow_defn)
 	{
-          // Can only specify a destination list for a flow definition 
+          // Can only specify a destination list for a flow definition
           LogF(cn, __func__, "'dstlist' can only be used with flow defns.\n");
 	}
 
@@ -1614,7 +1624,7 @@ FECContext* UdpProxy::ParseService(char* command, FECActionType action,
           // Can only specify a destination list for multicast flows
           LogF(cn, __func__, "'dstlist' can only be used with mcast flows.\n");
 	}
-	
+
         string dstlist_str;
         opt_toks.PeekBack(dstlist_str);
 
@@ -1626,7 +1636,7 @@ FECContext* UdpProxy::ParseService(char* command, FECActionType action,
         }
         else
         {
-          // There is a value for the dstlist 
+          // There is a value for the dstlist
 
 	  // dstlist specifies the GNAT node addresses for a multicast group
 	  // and is a comma separated list of GNAT lan side addresses: e.g.
@@ -1639,7 +1649,7 @@ FECContext* UdpProxy::ParseService(char* command, FECActionType action,
 	    string  dst;
 	    dsts.Pop(dst);
 	    Ipv4Address  address(dst);
-	    
+
 	    iron::BinIndex  bin_idx =
               bin_map_shm_.GetDstBinIndexFromAddress(address);
 
@@ -1661,7 +1671,7 @@ FECContext* UdpProxy::ParseService(char* command, FECActionType action,
       }
       tokens.Pop(token);
     }
-    
+
     // else: no string here, use default DSCP, RODR, and dstlist values.
   }
 
@@ -1837,7 +1847,15 @@ void UdpProxy::ProcessPktFromBpf(Packet* pkt)
         pkt->GetLengthInBytes());
 
     uint16_t  dst_port  = 0;
-    pkt->GetDstPort(dst_port);
+    if (pkt->GetDstPort(dst_port) == false)
+    {
+      LogE(cn, __func__, "Error retrieving destinatin port from "
+           "packet.\n");
+      TRACK_UNEXPECTED_DROP(cn, packet_pool_);
+      packet_pool_.Recycle(pkt);
+      pkt = NULL;
+      return;
+    }
 
     if (ntohs(dst_port) == iron::Rrm::kDefaultRrmPort)
     {
@@ -2313,24 +2331,24 @@ void UdpProxy::ProcessRRM(Packet* pkt)
   // 32 bits: packets released
   // 32 bits: average loss rate
 
-    EncodingState*  state;
-    if (!encoding.Find(four_tuple, state))
-    {
-      LogE(cn, __func__,
-           "Failed to find flow for tuple %s.\n",
-           four_tuple.ToString().c_str());
-    }
-    else
-    {
-      LogA(cn, __func__,
-           "RRM updating flow for tuple %s. Bytes: Hi %" PRIu64 " / Re %" PRIu64 
-           ", packets: Hi %" PRIu32 " / Re %" PRIu32 ", current loss rate: %" PRIu8 
-           "\%\n",
-           four_tuple.ToString().c_str(),
-           highest_num_bytes, num_released_bytes,
-           highest_num_pkts, num_released_pkts, cur_loss_rate_pct);
-      state->UpdateReceiverStats(highest_num_pkts, cur_loss_rate_pct);
-    }
+  EncodingState*  state;
+  if (!encoding.Find(four_tuple, state))
+  {
+    LogE(cn, __func__,
+         "Failed to find flow for tuple %s.\n",
+         four_tuple.ToString().c_str());
+  }
+  else
+  {
+    LogA(cn, __func__,
+         "RRM updating flow for tuple %s. Bytes: Hi %" PRIu64 " / Re %" PRIu64
+         ", packets: Hi %" PRIu32 " / Re %" PRIu32 ", current loss rate: %" PRIu8
+         "\%\n",
+         four_tuple.ToString().c_str(),
+         highest_num_bytes, num_released_bytes,
+         highest_num_pkts, num_released_pkts, cur_loss_rate_pct);
+    state->UpdateReceiverStats(highest_num_pkts, cur_loss_rate_pct);
+  }
 
   packet_pool_.Recycle(pkt);
 }

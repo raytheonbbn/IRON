@@ -59,7 +59,7 @@ function [y, graph, r, listLink] = MCG2(topoFile, src,dst_list,Deadline,maxPaths
     while tmp > 0
         [g(i,1),g(i,2),g(i,3),g(i,4)] = strread(tmp, '%d %d %f %f');
         % add in 3 packets worth of serialization latency to account for
-        % Copa2 over LinkEm
+        % CopaBeta2 over LinkEm
         g(i,3)=g(i,3)+30/g(i,4);
         i = i + 1;
         tmp = fgetl(fid);

@@ -208,34 +208,34 @@
 #*****************************************************************************
 # User defined flow and service definitions should be placed here:
 
-2 udp_proxy add_flow 30601;30601;$enclave1_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave12_iron_lan_addr$,$enclave2_iron_lan_addr$
+2 udp_proxy add_flow 30601;30601;$enclave1_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave12_iron_lan_addr$,$enclave2_iron_lan_addr$
 
-2 udp_proxy add_flow 30602;30602;$enclave2_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave1_iron_lan_addr$,$enclave3_iron_lan_addr$
+2 udp_proxy add_flow 30602;30602;$enclave2_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave1_iron_lan_addr$,$enclave3_iron_lan_addr$
 
-2 udp_proxy add_flow 30603;30603;$enclave3_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave2_iron_lan_addr$,$enclave4_iron_lan_addr$
+2 udp_proxy add_flow 30603;30603;$enclave3_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave2_iron_lan_addr$,$enclave4_iron_lan_addr$
 
-2 udp_proxy add_flow 30604;30604;$enclave4_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave3_iron_lan_addr$,$enclave5_iron_lan_addr$
+2 udp_proxy add_flow 30604;30604;$enclave4_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave3_iron_lan_addr$,$enclave5_iron_lan_addr$
 
-2 udp_proxy add_flow 30605;30605;$enclave5_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave4_iron_lan_addr$,$enclave6_iron_lan_addr$
+2 udp_proxy add_flow 30605;30605;$enclave5_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave4_iron_lan_addr$,$enclave6_iron_lan_addr$
 
-2 udp_proxy add_flow 30606;30606;$enclave6_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave5_iron_lan_addr$,$enclave7_iron_lan_addr$
+2 udp_proxy add_flow 30606;30606;$enclave6_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave5_iron_lan_addr$,$enclave7_iron_lan_addr$
 
-2 udp_proxy add_flow 30607;30607;$enclave7_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave6_iron_lan_addr$,$enclave8_iron_lan_addr$
+2 udp_proxy add_flow 30607;30607;$enclave7_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave6_iron_lan_addr$,$enclave8_iron_lan_addr$
 
-2 udp_proxy add_flow 30608;30608;$enclave8_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave7_iron_lan_addr$,$enclave9_iron_lan_addr$
+2 udp_proxy add_flow 30608;30608;$enclave8_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave7_iron_lan_addr$,$enclave9_iron_lan_addr$
 
-2 udp_proxy add_flow 30609;30609;$enclave9_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave8_iron_lan_addr$,$enclave10_iron_lan_addr$
+2 udp_proxy add_flow 30609;30609;$enclave9_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave8_iron_lan_addr$,$enclave10_iron_lan_addr$
 
-2 udp_proxy add_flow 30610;30610;$enclave10_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave9_iron_lan_addr$,$enclave11_iron_lan_addr$
+2 udp_proxy add_flow 30610;30610;$enclave10_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave9_iron_lan_addr$,$enclave11_iron_lan_addr$
 
-2 udp_proxy add_flow 30611;30611;$enclave11_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave10_iron_lan_addr$,$enclave12_iron_lan_addr$
+2 udp_proxy add_flow 30611;30611;$enclave11_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave10_iron_lan_addr$,$enclave12_iron_lan_addr$
 
-2 udp_proxy add_flow 30612;30612;$enclave12_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=25000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave11_iron_lan_addr$,$enclave1_iron_lan_addr$
+2 udp_proxy add_flow 30612;30612;$enclave12_app1_wan_addr$;227.9.18.31;1/1;1500;0;0;120;0;type=LOG:a=10:b=1:m=50000000:p=5:delta=0:avgint=0:resint=0:label=high_udp;dstlist=$enclave11_iron_lan_addr$,$enclave1_iron_lan_addr$
 
 #*****************************************************************************
 
 # Default TCP Proxy service definition.
-2 tcp_proxy add_service 0-65335;type=LOG:a=10:m=25000000:p=1:label=default_tcp_svc;
+2 tcp_proxy add_service 0-65335;type=LOG:a=10:m=50000000:p=1:label=default_tcp_svc;
 
 # Default UDP Proxy service definition.
 2 udp_proxy add_service 0-65335;1/1;1500;0;0;120;0;type=LOG:a=20:m=10000000:p=1:label=default_udp_svc;

@@ -1,0 +1,54 @@
+digraph sliq_data_can_send {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Enable FEC fields in pkt header\nSet pkt FEC group ID\nSet pkt FEC group index\nSet pkt FEC pkt type to FEC src" ];
+    blk2 [ shape = box,     label = "Generate m FEC enc pkts for FEC group\nStore generated pkts in orig FEC enc queue\nIf m == 0, record EOR for FEC group\nStart next FEC group" ];
+    blk3 [ shape = box,     label = "Set sr = 0\nSet er = 0\nGet latest connection PER estimate" ];
+    blk4 [ shape = box,     label = "Set N = tgt_N\nSet k = dyn_k" ];
+    blk5 [ shape = box,     label = "Use pure ARQ mode\nSet N = 1\nSet k = 1\nSet m = 0" ];
+    blk6 [ shape = box,     label = "Set arq_N = number of rounds for pure ARQ\nGet MaxRTT estimate\nGet MaxLtrOwd estimate" ];
+    blk7 [ shape = box,     label = "Use pure ARQ mode\nSet N = arq_N\nSet k = 1\nSet m = 0" ];
+    blk8 [ shape = box,     label = "Use FEC efficiency table to find\nmost efficient N and k to meet deadline\nIf lookup fails, use N = 1 and k = 1\nIf k > dyn_k, then set k = dyn_k" ];
+    blk9 [ shape = box,     label = "Use FEC lookup table on (N,PER,k,sr,ec) to find n\nSplit n into k src and m enc pkts to send" ];
+    dsc1 [ shape = diamond, label = "Using semi-rel\n ARQ+FEC mode?" ];
+    dsc2 [ shape = diamond, label = "Is pkt the\nfirst FEC src pkt in\nFEC group?" ];
+    dsc3 [ shape = diamond, label = "Is pkt the\nlast FEC src pkt in\nFEC group?" ];
+    dsc4 [ shape = diamond, label = "Is target\npkt delivery limit\na time value?" ];
+    dsc5 [ shape = diamond, label = "Can pure ARQ\nbe used in 1 round\nand still meet target pkt\ndelivery time?" ];
+    dsc6 [ shape = diamond, label = "Can pure ARQ\nbe used in arq_N rounds\nand still meet target pkt\ndelivery time?" ];
+
+    strt -> dsc1;
+
+    dsc1 -> blk1 [ label = "Yes" ];
+    dsc1 -> done [ label = "No" ];
+
+    blk1 -> dsc2;
+
+    dsc2 -> blk3 [ label = "Yes" ];
+    dsc2 -> dsc3 [ label = "No" ];
+
+    dsc3 -> blk2 [ label = "Yes" ];
+    dsc3 -> done [ label = "No" ];
+
+    blk2 -> done;
+    blk3 -> dsc4;
+
+    dsc4 -> dsc5 [ label = "Yes" ];
+    dsc4 -> blk4 [ label = "No" ];
+
+    blk4 -> blk9;
+
+    dsc5 -> blk5 [ label = "Yes" ];
+    dsc5 -> blk6 [ label = "No" ];
+
+    blk5 -> done;
+    blk6 -> dsc6;
+
+    dsc6 -> blk7 [ label = "Yes" ];
+    dsc6 -> blk8 [ label = "No" ];
+
+    blk7 -> done;
+    blk8 -> blk9;
+
+    blk9 -> done;
+}

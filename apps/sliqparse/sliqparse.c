@@ -677,6 +677,71 @@ void print_rcvd_pkt_cnt(double pkt_time, const char *saddr, const char *daddr,
 }
 
 /* ======================================================================== */
+void print_conn_meas(double pkt_time, const char *saddr, const char *daddr,
+                     uint8_t **sliq, size_t *pkt_len)
+{
+  int  max_owd = 0;
+
+  if (opt_log[CONN_MEAS_HEADER])
+  {
+    printf("%.6f ConMsr %s -> %s", pkt_time, saddr, daddr);
+    ++lines_logged;
+  }
+
+  if (*pkt_len >= kConnMeasHdrBaseSize)
+  {
+    struct ConnMeasHdrBase  *b_hdr = (struct ConnMeasHdrBase *)(*sliq);
+
+    max_owd = (int)((b_hdr->flags >> 7) & 0x01);
+
+    if (opt_log[CONN_MEAS_HEADER])
+    {
+      printf(" owd %d seq %" PRIu16 ,
+             max_owd,
+             (uint16_t)ntohs(b_hdr->seq));
+    }
+
+    *sliq    += kConnMeasHdrBaseSize;
+    *pkt_len -= kConnMeasHdrBaseSize;
+
+    if (max_owd != 0)
+    {
+      if (*pkt_len >= kConnMeasHdrMaxRtlOwdSize)
+      {
+        if (opt_log[CONN_MEAS_HEADER])
+        {
+          struct ConnMeasHdrMaxRtlOwd  *mro_hdr =
+            (struct ConnMeasHdrMaxRtlOwd *)(*sliq);
+
+          printf(" maxrtlowd %" PRIu32 ,
+                 (uint32_t)ntohl(mro_hdr->owd));
+        }
+
+        *sliq    += kConnMeasHdrMaxRtlOwdSize;
+        *pkt_len -= kConnMeasHdrMaxRtlOwdSize;
+      }
+      else
+      {
+        *sliq    += kConnMeasHdrMaxRtlOwdSize;
+        *pkt_len  = 0;
+      }
+    }
+  }
+  else
+  {
+    printf(" ERROR: too short");
+
+    *sliq    += kConnMeasHdrBaseSize;
+    *pkt_len  = 0;
+  }
+
+  if (opt_log[CONN_MEAS_HEADER])
+  {
+    printf("\n");
+  }
+}
+
+/* ======================================================================== */
 void print_cc_pkt_train(double pkt_time, const char *saddr, const char *daddr,
                         size_t missing_len, uint8_t *sliq, size_t pkt_len)
 {
@@ -1248,6 +1313,10 @@ void parse_pcap(const char *pcap_file)
           {
             print_rcvd_pkt_cnt(pkt_time, saddr, daddr, &sliq, &pkt_len);
           }
+          else if (sliq_type == CONN_MEAS_HEADER)
+          {
+            print_conn_meas(pkt_time, saddr, daddr, &sliq, &pkt_len);
+          }
           else if (sliq_type == CC_PKT_TRAIN_HEADER)
           {
             if (opt_log[sliq_type])
@@ -1322,6 +1391,7 @@ int main(int argc, char **argv)
   opt_log[ACK_HEADER]                  = 1;
   opt_log[CC_SYNC_HEADER]              = 1;
   opt_log[RCVD_PKT_CNT_HEADER]         = 1;
+  opt_log[CONN_MEAS_HEADER]            = 1;
 
   opt_log[CC_PKT_TRAIN_HEADER]         = 1;
 

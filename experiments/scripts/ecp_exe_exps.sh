@@ -210,11 +210,11 @@ for arg; do
 	./ecp_start_gulp.sh ${DEBUG_OPTION} -r ${RUN} ${arg}
 	if [ "${BASELINE_OPTION}" == "" ]; then
 	    ./ecp_start_iron.sh ${DEBUG_OPTION} -r ${RUN} ${arg}
-	    if [ ${DEMO_FLAG} -eq 0 ]; then
-		./ecp_start_traffic.sh ${DEBUG_OPTION} -r ${RUN} ${arg}
-	    else
-		echo "Running in demo mode. NOT starting applications."
-	    fi
+	fi
+	if [ ${DEMO_FLAG} -eq 0 ]; then
+	    ./ecp_start_traffic.sh ${DEBUG_OPTION} -r ${RUN} ${arg}
+	else
+	    echo "Running in demo mode. NOT starting applications."
 	fi
 
         # Start LinkEm adjustments with full system up and running

@@ -35,9 +35,7 @@
  */
 /* IRON: end */
 
-/// \file uber_fwd_alg.cc
-
-#include "uber_fwd_alg.h"
+#include "backpressure_dequeue_alg.h"
 
 #include "backpressure_fwder.h"
 #include "iron_constants.h"
@@ -57,16 +55,19 @@ using ::iron::LatencyClass;
 using ::iron::OrderedList;
 using ::iron::Packet;
 using ::iron::PathController;
-using ::iron::UberFwdAlg;
+using ::iron::BPDequeueAlg;
 
 namespace
 {
   /// Class name for logging.
-  const char          kClassName[]                  = "UberFwdAlg";
+  const char          kClassName[]                  = "BPDequeueAlg";
 
   /// The default search depth in the queues when using LatencyAware
   /// forwarding, in bytes.
   const uint32_t      kDefaultQueueSearchDepthBytes = 5000;
+
+  /// The default multicast queue search depth, in packets.
+  const uint32_t  kDefaultMcastQueueSearchDepthPkts = 200;
 
   /// The (unchangeable) search depth in the queues when using Base
   /// forwarding.
@@ -83,7 +84,7 @@ namespace
   /// The default boolean whether to use opportunistic forwarding for mcast
   /// fwding.
   const bool          kDefaultEnableMcastOpportunisticFwding
-                                                          = false;
+                                                          = true;
 
   /// The default opportunistic forwarding floor for mcast fwding.
   const int64_t       kDefaultMcastOpportunisticFwdingFloor
@@ -132,10 +133,10 @@ namespace
 }
 
 //============================================================================
-UberFwdAlg::UberFwdAlg(BPFwder& bpfwder, PacketPool& packet_pool,
-                       BinMap& bin_map, QueueStore* q_store,
-                       PacketHistoryMgr* packet_history_mgr,
-                       size_t num_path_ctrls, PathCtrlInfo* path_ctrls)
+BPDequeueAlg::BPDequeueAlg(BPFwder& bpfwder, PacketPool& packet_pool,
+                           BinMap& bin_map, QueueStore* q_store,
+                           PacketHistoryMgr* packet_history_mgr,
+                           size_t num_path_ctrls, PathCtrlInfo* path_ctrls)
     : initialized_(false),
       queue_store_(q_store),
       bin_map_(bin_map),
@@ -152,6 +153,7 @@ UberFwdAlg::UberFwdAlg(BPFwder& bpfwder, PacketPool& packet_pool,
       alg_name_(kDefaultBpfwderAlg),
       base_(true),
       queue_search_depth_(kDefaultQueueSearchDepthBytes),
+      mcast_queue_search_depth_pkts_(kDefaultMcastQueueSearchDepthPkts),
       zombifiable_ttypes_(),
       num_zombifiable_ttypes_(0),
       priority_dequeue_ttypes_(),
@@ -166,7 +168,6 @@ UberFwdAlg::UberFwdAlg(BPFwder& bpfwder, PacketPool& packet_pool,
       anti_circ_(AC_TECH_NONE),
       enable_hierarchical_fwding_(kDefaultHierarchicalFwding),
       multi_deq_(kDefaultMultiDeq),
-      exclude_infinite_paths_(false),
       enable_mcast_opportunistic_fwding_(
         kDefaultEnableMcastOpportunisticFwding),
       opportunistic_fwding_floor_(kDefaultMcastOpportunisticFwdingFloor),
@@ -191,7 +192,7 @@ UberFwdAlg::UberFwdAlg(BPFwder& bpfwder, PacketPool& packet_pool,
 }
 
 //============================================================================
-UberFwdAlg::~UberFwdAlg()
+BPDequeueAlg::~BPDequeueAlg()
 {
   BinIndex  bin_idx = kInvalidBinIndex;
 
@@ -210,7 +211,7 @@ UberFwdAlg::~UberFwdAlg()
 }
 
 //============================================================================
-void UberFwdAlg::Initialize(const ConfigInfo& config_info)
+void BPDequeueAlg::Initialize(const ConfigInfo& config_info)
 {
   //
   // Extract the path controller xmit queue threshold, in bytes.
@@ -249,6 +250,10 @@ void UberFwdAlg::Initialize(const ConfigInfo& config_info)
   {
     queue_search_depth_ = kQueueSearchDepthBaseBytes;
   }
+
+  // Extract the maximum search depth when looking for multicast packets.
+  mcast_queue_search_depth_pkts_ = config_info.GetUint(
+    "Bpf.Alg.McastQueueSearchDepth", kDefaultMcastQueueSearchDepthPkts);
 
   drop_expired_ = config_info.GetBool("Bpf.Alg.DropExpired",
     kDefaultDropExpired || base_);
@@ -326,9 +331,6 @@ void UberFwdAlg::Initialize(const ConfigInfo& config_info)
     return;
   }
   has_prio_ttypes_.Clear(false);
-
-  exclude_infinite_paths_       = config_info.GetBool(
-    "Bpf.Alg.Mcast.ExcludeInfinitePaths", false);
 
   enable_mcast_opportunistic_fwding_  = config_info.GetBool(
     "Bpf.Alg.Mcast.EnableOpportunisticFwding",
@@ -410,9 +412,6 @@ void UberFwdAlg::Initialize(const ConfigInfo& config_info)
   LogC(kClassName, __func__,
        "Bpf.Alg.DropExpired           : %s\n", drop_expired_ ? "On" : "Off");
   LogC(kClassName, __func__,
-       "Bpf.Alg.Mcast.ExcludeInfinitePaths: %s\n",
-       exclude_infinite_paths_ ? "On" : "Off");
-  LogC(kClassName, __func__,
        "Bpf.Alg.Mcast.OppFwding       : %s\n",
       enable_mcast_opportunistic_fwding_ ? "On" : "Off");
   LogC(kClassName, __func__,
@@ -434,7 +433,7 @@ void UberFwdAlg::Initialize(const ConfigInfo& config_info)
 }
 
 //============================================================================
-void UberFwdAlg::ResetFwdingAlg(const ConfigInfo& config_info)
+void BPDequeueAlg::ResetFwdingAlg(const ConfigInfo& config_info)
 {
   if (!initialized_)
   {
@@ -540,334 +539,80 @@ void UberFwdAlg::ResetFwdingAlg(const ConfigInfo& config_info)
 }
 
 //============================================================================
-uint8_t UberFwdAlg::FindNextTransmission(iron::TxSolution* solutions,
-                                         uint8_t max_num_solutions)
+uint8_t BPDequeueAlg::FindNextTransmission(TxSolution* solutions,
+                                           uint8_t max_num_solutions)
 {
-  uint8_t num_solutions = 0;
-
   if (!initialized_)
   {
-    LogE(kClassName, __func__,
-         "Uber BPF alg is not initialized.  Cannot compute next transmission "
-         "opportunity.\n");
+    LogE(kClassName, __func__, "Uber BPF alg is not initialized. Cannot "
+         "compute next transmission opportunity.\n");
     return 0;
   }
 
-  // If there are NO packets in any queue, skip all ops.
-  // The idea is to avoid computing latency stats and solutions when we have
-  // strictly nothing to do.
+  // This optimization isn't explicitly called out in the packet forwarder
+  // description in the BPF design documentation. If there are NO packets in
+  // any queue, skip all ops. Avoid computing latency stats and finding
+  // solutions when there are no queued packets.
   if (queue_store_->AreQueuesEmpty())
   {
-    LogD(kClassName, __func__,
-         "All queues empty, no transmit opportunity to compute.\n");
+    LogD(kClassName, __func__, "All queues empty, no available transmit "
+         "opportunity.\n");
 
     BinIndex  idx = 0;
-
-    for (bool valid = bin_map_.GetFirstUcastBinIndex(idx);
-         valid;
-         valid = bin_map_.GetNextUcastBinIndex(idx))
+    for (bool idx_valid = bin_map_.GetFirstUcastBinIndex(idx);
+         idx_valid;
+         idx_valid = bin_map_.GetNextUcastBinIndex(idx))
     {
-      // A packet coming to this queue would experience no queuing delay.  Add
-      // to average.
+      // A packet coming to this queue would experience no queuing delay. Add
+      // 0 to the average.
       AddDelayToAverage(0, idx);
     }
+
     return 0;
   }
 
-  Time  now = Time::Now();
-
-  // Zombify pkts in Critical & Low-Lat queues. In the process, if we find a
-  // critical candidate that can be sent over an interface that is currently
-  // available send it.
-  // Iterate through bins.
-  BinQueueMgr*      q_mgr       = NULL;
-  Time              ttg;
-  ttg.SetInfinite();
-  TransmitCandidate candidate;
-  candidate.ttg.SetInfinite();
-
-  size_t    min_lat_pc_index  = 0;
-
-  int32_t   path_ctrl_size[kMaxPathCtrls];
-
-  for (uint8_t pci = 0; pci < kMaxPathCtrls; ++pci)
+  // Steps S1 and S2 from the packet forwarder description in the BPF design
+  // documentation, clean up expired packets and criticalize packets.
+  Time               now = Time::Now();
+  int32_t            path_ctrl_q_sizes[kMaxPathCtrls];
+  TransmitCandidate  critical_candidate;
+  if (!ZombifyAndCriticalizePkts(now, kMaxPathCtrls, path_ctrl_q_sizes,
+                                 critical_candidate))
   {
-    path_ctrl_size[pci] = -1;
+    return 0;
   }
 
-  // Iterate through the bins to clean them up, i.e., Criticalize, Zombify, get
-  // some time-to-reach.
-  // MCAST TODO: this is just cleaning up unicast bins at the
-  // moment. Eventually we probably want to include multicast bins as well.
-  BinIndex  dst_bin_idx = 0;
-
-  for (bool valid = bin_map_.GetFirstUcastBinIndex(dst_bin_idx);
-       !base_ && valid;
-       valid = bin_map_.GetNextUcastBinIndex(dst_bin_idx))
-  {
-    q_mgr = queue_store_->GetBinQueueMgr(dst_bin_idx);
-
-    // Print the BinQueueMgr to see the make up of our queues.  Note this is a
-    // little different than the BP values used for gradients (watch out for
-    // NPLB).
-    q_mgr->Print();
-
-    if (!(q_mgr->ContainsLSNonZombies()))
-    {
-      // A packet coming to this queue would experience no delay.  Add to
-      // average.
-      AddDelayToAverage(0, dst_bin_idx);
-    }
-
-    if (q_mgr->depth_packets() == 0)
-    {
-      // There are no packets in the queue (maybe I am
-      // the destination), therefore nothing to do for
-      // this bin.
-      continue;
-    }
-
-    uint32_t  latency_us[kMaxPathCtrls];
-    memset(latency_us, 0, sizeof(latency_us));
-    Time      min_ttr;
-    min_ttr.SetInfinite();
-
-    if (anti_circ_ == AC_TECH_HEURISTIC_DAG)
-    {
-      // Get the per path controller latency, which is same for all packets of
-      // this bin.
-      // Compute best path controller busy-ness.
-      bpfwder_.GetPerPcLatencyToDst(dst_bin_idx, (uint32_t*) latency_us,
-                                    false);
-
-      // Check best path controller queue state: free or busy?
-      if (GetMinLatencyPath(latency_us, num_path_ctrls_, min_lat_pc_index,
-        min_ttr) && (path_ctrl_size[min_lat_pc_index] == -1))
-      {
-        // Not computed yet.
-        PathController* path_ctrl = path_ctrls_[min_lat_pc_index].path_ctrl;
-
-        if (!path_ctrl)
-        {
-          LogF(kClassName, __func__,
-               "Path controller at index %" PRIu8 " is NULL.\n",
-               min_lat_pc_index);
-          return 0;
-        }
-
-        size_t  current_pc_queue_size = 0;
-
-        if (!(path_ctrl->GetXmitQueueSize(current_pc_queue_size)))
-        {
-          // This path controller does not have a current transmit queue size.
-          // Maybe it is still connecting to a peer.  Move on.
-          LogD(kClassName, __func__,
-               "Path to nbr %" PRIBinId " is currently not accepting "
-               "packets.\n", path_ctrl->remote_bin_id());
-          current_pc_queue_size = xmit_buf_free_thresh_;
-        }
-
-        path_ctrl_size[min_lat_pc_index] = current_pc_queue_size;
-
-        if (WouldLogD(kClassName))
-        {
-          if (current_pc_queue_size >= xmit_buf_free_thresh_)
-          {
-            // Path Controller full, will not be able to use this neighbor for
-            // this bin.
-            LogD(kClassName, __func__,
-                 "Path to nbr %" PRIBinId " is full (Q (%zd) > %" PRIu32
-                 ") cannot use.\n", path_ctrl->remote_bin_id(),
-                 current_pc_queue_size, xmit_buf_free_thresh_);
-          }
-          else
-          {
-            LogD(kClassName, __func__,
-                 "Lowest lat path to nbr %" PRIBinId " is currently "
-                 "available.\n", path_ctrl->remote_bin_id());
-          }
-        }
-      }
-    } // End heuristic_dag only.
-
-    // Go through the EF and CRITICAL queues to zombify.
-    for (uint8_t ttype_i = 0; ttype_i < num_zombifiable_ttypes_; ++ttype_i)
-    {
-      LatencyClass  ttype = zombifiable_ttypes_[ttype_i];
-
-      uint32_t  num_available_bytes = 0;
-      Packet*   prev_pkt            = NULL;
-
-      q_mgr->PrepareIteration(ttype);
-      PacketQueue::QueueWalkState saved_it;
-
-      // Search inside the queue.
-      while (num_available_bytes < queue_search_depth_)
-      {
-        Packet* pkt = q_mgr->PeekNext(ttype, saved_it);
-
-        if (!pkt || (prev_pkt == pkt))
-        {
-          LogD(kClassName, __func__,
-               "No pkt for bin %s for traffic type %s beyond.\n",
-               bin_map_.GetIdToLog(dst_bin_idx).c_str(),
-               LatencyClass_Name[ttype].c_str());
-          break;
-        }
-
-        prev_pkt  = pkt;
-
-        if (anti_circ_ == AC_TECH_CONDITIONAL_DAG)
-        {
-          // Get the per path controller latency, which is same for all packets
-          // of this bin.
-          // Compute best path controller busy-ness.
-          bpfwder_.GetPerPcLatencyToDst(dst_bin_idx, (uint32_t*) latency_us,
-            false, pkt);
-
-          // Check best path controller queue state: free or busy?
-          GetMinLatencyPath(latency_us, num_path_ctrls_, min_lat_pc_index,
-            min_ttr);
-        }
-
-        // Figure out if this packet can still be delivered.
-        // Get time to go from packet.
-        if (pkt->time_to_go_valid())
-        {
-          ttg = pkt->GetTimeToGo() - (now - pkt->recv_time());
-        }
-
-        if (ttg < min_ttr)
-        {
-          // Packet cannot make it on any interface.
-          LogD(kClassName, __func__,
-               "Pkt %p with ttg %s cannot be delivered in time on any "
-               "interface (min_ttr %s). Drop.\n",
-               pkt, ttg.ToString().c_str(),
-               min_ttr.ToString().c_str());
-          pkt = q_mgr->DequeueAtCurrentIterator(ttype);
-
-          if (pkt && pkt->HasQueuingDelay())
-          {
-            AddDelayToAverage(Time::GetNowInUsec() -
-              pkt->recv_time().GetTimeInUsec(), dst_bin_idx);
-          }
-
-          uint16_t  packet_len  = pkt->virtual_length();
-          if (drop_expired_ || !q_mgr->ZombifyPacket(pkt))
-          {
-            bpfwder_.AddDroppedBytes(dst_bin_idx, packet_len);
-            TRACK_EXPECTED_DROP(kClassName, packet_pool_);
-            LogD(kClassName, __func__,
-                 "Dropped expired packet %p or Zombification failed.\n", pkt);
-            packet_pool_.Recycle(pkt);
-          }
-          continue;
-        }
-
-        if (anti_circ_ == AC_TECH_HEURISTIC_DAG)
-        {
-          // Anti-circulation technique is heuristic_dag, deal with critical.
-          if ((ttype == CRITICAL_LATENCY) && (ttg < candidate.ttg) &&
-            (path_ctrl_size[min_lat_pc_index] <
-              static_cast<int32_t>(xmit_buf_max_thresh_)))
-          {
-            // Critical packet has tighter deadline and can go on non-busy path
-            // controller.
-            candidate.is_valid          = true;
-            candidate.pkt               = pkt;
-            candidate.bin_idx           = dst_bin_idx;
-            candidate.id_to_log         = bin_map_.GetIdToLog(dst_bin_idx);
-            candidate.ttg               = ttg;
-            candidate.ttr               = min_ttr;
-            candidate.path_ctrl_index   = min_lat_pc_index;
-            candidate.dequeue_loc       = saved_it;
-            candidate.q_mgr             = q_mgr;
-            LogD(kClassName, __func__,
-                 "Critical packet %p with ttg %s on available path "
-                 "controller %" PRIu8 " overtakes candidates.\n",
-                 pkt, ttg.ToString().c_str(), min_lat_pc_index);
-          }
-
-          if ((ttype == LOW_LATENCY) &&
-            IsHistoryConstrained(pkt, ttg, latency_us, num_path_ctrls_))
-          {
-            // EF packet is history-constrained and not yet in critical.
-            // But this should not prevent us from assessing it as a candidate.
-            pkt = q_mgr->DequeueAtCurrentIterator(ttype);
-
-            if (!q_mgr->CriticalizePacket(pkt))
-            {
-              if (pkt->HasQueuingDelay())
-              {
-                AddDelayToAverage(Time::GetNowInUsec() -
-                  pkt->recv_time().GetTimeInUsec(), dst_bin_idx);
-              }
-
-              TRACK_UNEXPECTED_DROP(kClassName, packet_pool_);
-              LogD(kClassName, __func__,
-                   "Dropped packet %p (Criticialization failed).\n", pkt);
-              packet_pool_.Recycle(pkt);
-            }
-            else
-            {
-              if ((ttg < candidate.ttg) &&
-                (path_ctrl_size[min_lat_pc_index] <
-                  static_cast<int32_t>(xmit_buf_max_thresh_)))
-              {
-                // This pkt has a tighter deadline.
-                candidate.is_valid          = true;
-                candidate.pkt               = pkt;
-                candidate.bin_idx           = dst_bin_idx;
-                candidate.q_mgr             = q_mgr;
-                candidate.id_to_log         = bin_map_.GetIdToLog(dst_bin_idx);
-                candidate.ttg               = ttg;
-                candidate.ttr               = min_ttr;
-                candidate.path_ctrl_index   = min_lat_pc_index;
-                if (!q_mgr->GetIterator(CRITICAL_LATENCY,
-                  pkt, candidate.dequeue_loc))
-                {
-                  candidate.pkt = NULL;
-                  candidate.is_valid = false;
-                }
-                LogD(kClassName, __func__,
-                     "Low-latency packet %p with ttg %s on available path "
-                     "controller %" PRIu8 " overtakes candidates.\n",
-                     pkt, ttg.ToString().c_str(), min_lat_pc_index);
-              }
-            }
-            continue;
-          }
-        } // End heuristic_dag condition.
-
-        num_available_bytes  += pkt->virtual_length();
-      } // End queue search.
-    } // End Zombifiable iteration.
-  } // End bin iteration clean up. MCAST TODO unicast iteration only.
-  // END Zombification and Criticalization.
-
   // Now print all mcast bins, so we have a full list in the log.
+  //
+  // Question: Why is this done here?
   if (WouldLogD(kClassName))
   {
-    dst_bin_idx = 0;
-
-    for (bool valid = bin_map_.GetFirstMcastBinIndex(dst_bin_idx);
-         valid;
-         valid = bin_map_.GetNextMcastBinIndex(dst_bin_idx))
+    BinIndex  dst_bin_idx = 0;
+    for (bool dst_bin_idx_valid = bin_map_.GetFirstMcastBinIndex(dst_bin_idx);
+         dst_bin_idx_valid;
+         dst_bin_idx_valid = bin_map_.GetNextMcastBinIndex(dst_bin_idx))
     {
       queue_store_->GetBinQueueMgr(dst_bin_idx)->Print();
     }
   }
 
+  // Step S3 from the packet forwarder description in the BPF design
+  // documentation, handle critical packets with latency. This is simple
+  // enough that we won't make a separate method call.
+  //
   // If there is a critical candidate, send it.
-  // MCAST TODO if there is one, we know it's unicast right now.
-  if (candidate.is_valid && candidate.pkt)
+  //
+  // MCAST TODO: If there is a critical candidate, we know it's
+  //             unicast. Handle multicast case in the future.
+  uint8_t num_solutions = 0;
+
+  if (critical_candidate.is_valid && critical_candidate.pkt)
   {
-    solutions[0].pkt              = candidate.q_mgr->DequeueAtIterator(
-      CRITICAL_LATENCY, candidate.dequeue_loc);
-    solutions[0].bin_idx          = candidate.bin_idx;
-    solutions[0].path_ctrl_index  = candidate.path_ctrl_index;;
-    num_solutions                 = 1;
+    solutions[0].pkt = critical_candidate.q_mgr->DequeueAtIterator(
+      CRITICAL_LATENCY, critical_candidate.dequeue_loc);
+    solutions[0].bin_idx         = critical_candidate.bin_idx;
+    solutions[0].path_ctrl_index = critical_candidate.path_ctrl_index;;
+    num_solutions                = 1;
 
     if (solutions[0].pkt->HasQueuingDelay())
     {
@@ -875,9 +620,9 @@ uint8_t UberFwdAlg::FindNextTransmission(iron::TxSolution* solutions,
         solutions[0].pkt->recv_time().GetTimeInUsec(), solutions[0].bin_idx);
     }
 
-    LogD(kClassName, __func__,
-         "Selected immediate release of candidate %s.\n",
-         candidate.ToString().c_str());
+    LogD(kClassName, __func__, "Selected immediate release of candidate "
+         "%s.\n", critical_candidate.ToString().c_str());
+
     return num_solutions;
   } // END sending critical candidate.
 
@@ -887,703 +632,56 @@ uint8_t UberFwdAlg::FindNextTransmission(iron::TxSolution* solutions,
 
   // Keep the gradients ordered.
   OrderedList<Gradient, int64_t>  ls_gradients(iron::LIST_DECREASING);
-  OrderedList<Gradient, int64_t>* ef_gradients = &ls_gradients;
   OrderedList<Gradient, int64_t>  gradients(iron::LIST_DECREASING);
 
   // Get the queue depth of the queues for the priority types.  If zero, do not
   // attempt to find a packet for the gradient (during LS processing).
   has_prio_ttypes_.Clear(false);
 
-  // First compute the backpressure gradient.
-  for (size_t pc_index = 0; pc_index < num_path_ctrls_;
-    ++pc_index)
-  {
-    PathController* path_ctrl = path_ctrls_[pc_index].path_ctrl;
+  // Step S4 from the packet forwarder description in the BPF design
+  // documentation, construct forwarding gradients.
+  ComputeGradients(path_ctrl_q_sizes, gradients, ls_gradients);
 
-    if (!path_ctrl)
-    {
-      continue;
-    }
-
-    if (!path_ctrl->ready())
-    {
-      LogD(kClassName, __func__,
-           "Not considering unready path ctrl %" PRIu8 " (no QLAM received yet)."
-           "\n",
-           pc_index);
-      continue;
-    }
-
-    // Check Path Controller queue state: free or busy?
-    if (path_ctrl_size[pc_index] == -1)
-    {
-      size_t  current_pc_queue_size = 0;
-
-      if (!(path_ctrl->GetXmitQueueSize(current_pc_queue_size)))
-      {
-        // This path controller does not have a current transmit queue size.
-        // Maybe it is still connecting to a peer.  Move on.
-        LogD(kClassName, __func__,
-             "Path to nbr %" PRIBinId " currently has no queue.\n",
-             path_ctrl->remote_bin_id());
-        continue;
-      }
-
-      path_ctrl_size[pc_index] = current_pc_queue_size;
-
-      if (WouldLogD(kClassName))
-      {
-        if (current_pc_queue_size >= static_cast<size_t>(xmit_buf_free_thresh_))
-        {
-          // Path Controller full, will not be able to use this neighbor for
-          // this bin.
-          LogD(kClassName, __func__,
-               "Path to nbr %" PRIBinId " is full (Q (%zd) > %" PRIu32
-               "B) cannot use.\n", path_ctrl->remote_bin_id(),
-               current_pc_queue_size, xmit_buf_free_thresh_);
-        }
-        else
-        {
-          LogD(kClassName, __func__,
-               "Path to nbr %" PRIBinId " is available.\n",
-               path_ctrl->remote_bin_id());
-        }
-      }
-    }
-
-    if (path_ctrl_size[pc_index] >= static_cast<int32_t>(xmit_buf_free_thresh_))
-    {
-      // The path controller is busy.
-      LogD(kClassName, __func__,
-           "Skip busy path ctrl %" PRIu8 " to nbr %" PRIBinId ".\n",
-           pc_index, path_ctrl->remote_bin_id());
-      continue;
-    }
-
-    // Iterate through bins and compute the differential for each, including
-    // unicast and multicast destination bins.
-    BinIndex  dst_bin_idx = kInvalidBinIndex;
-
-    for (bool dst_bin_idx_valid = bin_map_.GetFirstDstBinIndex(dst_bin_idx);
-         dst_bin_idx_valid;
-         dst_bin_idx_valid = bin_map_.GetNextDstBinIndex(dst_bin_idx))
-    {
-      LogD(kClassName, __func__,
-           "=========== Nbr %" PRIBinId " (%" PRIBinId "), Dst Bin %s "
-           "================\n",
-           bin_map_.GetPhyBinId(path_ctrl->remote_bin_idx()),
-           path_ctrl->remote_bin_id(),
-           bin_map_.GetIdToLog(dst_bin_idx).c_str());
-
-      if (!base_)
-      {
-        has_prio_ttypes_[dst_bin_idx]  = queue_store_->GetBinQueueMgr(
-          dst_bin_idx)->ContainsPacketsWithTtypes(
-            priority_dequeue_ttypes_, num_priority_dequeue_ttypes_);
-      }
-      if (queue_store_->GetBinQueueMgr(dst_bin_idx)->depth_packets() == 0)
-      {
-        LogD(kClassName, __func__,
-             "My queue to Bin %s is empty, go on to next bin.\n",
-             bin_map_.GetIdToLog(dst_bin_idx).c_str());
-        // There are no packets in the queue (maybe I am the destination),
-        // therefore nothing to do for this bin.
-        continue;
-      }
-
-      // Get neighbor queue depths.
-      QueueDepths* nbr_queue_depth  = queue_store_->GetBinQueueMgr(
-        dst_bin_idx)->GetNbrQueueDepths(path_ctrl->remote_bin_idx());
-      // NULL check done when computing gradients.
-
-      // Get neighbor virtual queue depths.
-      QueueDepths* nbr_v_queue_depth  =
-        queue_store_->PeekNbrVirtQueueDepths(path_ctrl->remote_bin_idx());
-
-      Gradient gradient;
-      gradient.bin_idx             = dst_bin_idx;
-      gradient.path_ctrl_index     = pc_index;
-      gradient.is_dst              = false;
-      gradient.dst_vec             = 0;
-
-      Gradient ls_gradient;
-      ls_gradient.bin_idx          = dst_bin_idx;
-      ls_gradient.path_ctrl_index  = pc_index;
-      ls_gradient.is_dst           = false;
-      ls_gradient.dst_vec          = 0;
-
-      // Note that GetVirtQueueDepths returns the reference to the virtual
-      // QueueDepths object, therefore we need not check its return for NULL.
-      if (bin_map_.IsMcastBinIndex(gradient.bin_idx))
-      {
-        // This function will return the per-destination gradients, which are
-        // only used after we pick the multicast group and path controller.
-        ComputeMulticastGradient(path_ctrl,
-          queue_store_->GetQueueDepthsForBpf(dst_bin_idx),
-          nbr_queue_depth,
-          queue_store_->GetVirtQueueDepths(),
-          nbr_v_queue_depth,
-          gradient, ls_gradient);
-      }
-      else
-      {
-        ComputeOneBinGradient(dst_bin_idx, path_ctrl,
-                              queue_store_->GetQueueDepthsForBpf(dst_bin_idx),
-                              nbr_queue_depth,
-                              queue_store_->GetVirtQueueDepths(),
-                              nbr_v_queue_depth,
-                              gradient.is_dst,
-                              gradient.value, ls_gradient.value);
-        if (gradient.value <=
-            (gradient.is_dst ? 0 : static_cast<int64_t>(hysteresis_)))
-        {
-          LogD(kClassName, __func__,
-               "Ucast gradient %" PRId64 "B is below hysteresis, setting to "
-               "0B.\n",
-               gradient.value);
-          gradient.value  = 0;
-        }
-        if (ls_gradient.value <= static_cast<int64_t>(hysteresis_))
-        {
-          LogD(kClassName, __func__,
-               "Ucast LS gradient %" PRId64 "B is below hysteresis, setting to "
-               "0B.\n",
-               ls_gradient.value);
-          ls_gradient.value  = 0;
-        }
-        ls_gradient.is_dst = gradient.is_dst;
-      }
-
-      // Gradient value is given +1 if goes to destination directly to give
-      // it preference.
-      if (gradient.value > 0)
-      {
-        gradients.Push(gradient, gradient.value + (gradient.is_dst? 1 : 0));
-        LogD(kClassName, __func__,
-             "Found %s gradient %" PRId64 "B on (bin %s, pc %" PRIu8 ") %s"
-             " 0x%X.\n",
-             (gradient.dst_vec == 0 ? "unicast" : "multicast"),
-             gradient.value, bin_map_.GetIdToLog(dst_bin_idx).c_str(),
-             pc_index,
-             gradient.is_dst ? "to dst" : "not to dst",
-             gradient.dst_vec);
-      }
-      else
-      {
-        LogD(kClassName, __func__,
-             "%s gradient %dB is negative or below hysteresis %" PRIu32 "B.\n",
-             (gradient.dst_vec == 0 ? "Unicast" : "Multicast"),
-             gradient.value, hysteresis_);
-      }
-
-      // Gradient value is given +1 if goes to destination directly to give it
-      // preference.
-      if (ls_gradient.value > 0)
-      {
-        ls_gradients.Push(ls_gradient, ls_gradient.value +
-                          (ls_gradient.is_dst? 1 : 0));
-        LogD(kClassName, __func__,
-             "Found LS gradient %" PRId64 "B on (bin %s, pc %" PRIu8 ") %s"
-             " 0x%X.\n",
-             ls_gradient.value, bin_map_.GetIdToLog(dst_bin_idx).c_str(),
-             pc_index,
-             ls_gradient.is_dst ? "to dst" : "not to dst",
-             ls_gradient.dst_vec);
-      }
-      else
-      {
-        LogD(kClassName, __func__,
-             "LS gradient %dB is negative or below hysteresis %" PRIu32 "B.\n",
-             ls_gradient.value, hysteresis_);
-      }
-    } // End bin iterations.
-  } // END gradient computations.
-
-  // Provide BinQueueMgr gradient info to help with addressing starvation
+  // Provide BinQueueMgr gradient info to help with addressing starvation.
   queue_store_->ProcessGradientUpdate(ls_gradients, gradients);
 
-  // *** Low-Latency Solution ***
-  // Now, try to find a solution in the low-latency traffic first.
-  OrderedList<TransmitCandidate, Time>      candidates(iron::LIST_INCREASING);
-  OrderedList<Gradient, int64_t>::WalkState grad_ws;
-  Gradient                                  gradient;
-  int32_t                                   max_bytes         = 1;
-  uint32_t                                  cand_bytes_found  = 0;
-
-  if (!enable_hierarchical_fwding_)
+  // Step S5 from the packet forwarder description in the BPF design
+  // documentation, find latency-sensitive gradient-based packets.
+  OrderedList<Gradient, int64_t>*  ef_gradients = NULL;
+  if (enable_hierarchical_fwding_)
   {
-    ef_gradients  = &gradients;
+    ef_gradients = &ls_gradients;
+  }
+  else
+  {
+    ef_gradients = &gradients;
   }
 
-  for (uint8_t ttype_i = 0;
-    ttype_i < num_priority_dequeue_ttypes_;
-    ++ttype_i)
+  FindLatencySensitivePkts(now, ef_gradients, path_ctrl_q_sizes,
+                           max_num_solutions, solutions, num_solutions);
+  if (num_solutions > 0)
   {
-    LatencyClass  ttype = priority_dequeue_ttypes_[ttype_i];
-
-    // TODO: If no packet in the EF class, skip.
-
-    grad_ws.PrepareForWalk();
-
-    while (ef_gradients->GetNextItem(grad_ws, gradient))
-    {
-      if (!path_ctrls_[gradient.path_ctrl_index].path_ctrl ||
-          !has_prio_ttypes_[gradient.bin_idx])
-      {
-        LogD(kClassName, __func__,
-             "No priority ttype in this queue, skipping gradient %" PRIu32 "B.\n",
-             gradient.value);
-        continue;
-      }
-
-      if ((gradient.value <= 0) || (!candidates.Empty()))
-      {
-        // No positive gradient, or we already have candidates.
-        break;
-      }
-
-      // TODO: Can we call this once at the start of the function, instead of
-      // calling it for each latency class?
-      max_bytes = 1;
-
-      LogD(kClassName, __func__,
-           "Exploring gradient %" PRId64 "B to bin_id %s on path ctrl %"
-           PRIu8 " to nbr %" PRIBinId " / %" PRIBinId " (%s).\n",
-           gradient.value,
-           bin_map_.GetIdToLog(gradient.bin_idx).c_str(),
-           gradient.path_ctrl_index,
-           bin_map_.GetPhyBinId(
-             path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_idx()),
-           path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_id(),
-           gradient.is_dst ? "is_dst" : "not dst");
-
-      int32_t num_bytes_left_on_pc =
-        static_cast<int32_t>(xmit_buf_max_thresh_) -
-          path_ctrl_size[gradient.path_ctrl_index];
-
-      if (multi_deq_)
-      {
-        // Note: The previous approach consisted in allowing to dequeue as least as
-        // many bytes as the gap between the two largest gradients, and only 1B
-        // when they were equal.  This was observed to be too conservative and led
-        // to self-limiting low dequeue-rates.
-        //
-        // We now attempt to fill the path controller's transmit buffer.
-        max_bytes = num_bytes_left_on_pc;
-      }
-
-      LogD(kClassName, __func__,
-           "Allow %" PRId32 "B max to be dequeued at once."
-           "\n",
-           max_bytes);
-
-      // For zombie ttypes, only return enough bytes to make up the difference
-      // between what we've found so far and what we need. Otherwise, it's ok
-      // to get max_bytes of real packets for each gradient and sort it out
-      // later.
-      uint32_t to_find = static_cast<uint32_t>(max_bytes);
-      if (Packet::IsZombie(ttype))
-      {
-        if (to_find > cand_bytes_found)
-        {
-          to_find -= cand_bytes_found;
-        }
-        else
-        {
-          break;
-        }
-      }
-      if (!bin_map_.IsMcastBinIndex(gradient.bin_idx))
-      {
-        cand_bytes_found += FindUcastPacketsForGradient(
-          gradient, ttype, now, !base_, candidates, to_find);
-      }
-      else if (ttype_i == 0)
-      {
-        const LatencyClass* dequeue_order = NULL;
-        if (gradient.is_zombie == true)
-        {
-         // The zombie gradient is larger, so find zombie solutions first.
-          dequeue_order = priority_dequeue_ttypes_zombies_first_;
-        }
-        else
-        {
-          dequeue_order = priority_dequeue_ttypes_;
-        }
-
-        for (uint8_t ttype_j = 0;
-             ttype_j < num_priority_dequeue_ttypes_; ++ttype_j)
-        {
-            LatencyClass  mcast_ttype = dequeue_order[ttype_j];
-            cand_bytes_found += FindMcastPacketsForGradient(
-              gradient, mcast_ttype, candidates, to_find);
-        }
-      }
-    }
-
-    // We have explored all packets that could match this gradient.
-    TransmitCandidate                               selected_candidate;
-    OrderedList<TransmitCandidate, Time>::WalkState cand_ws;
-    cand_ws.PrepareForWalk();
-
-    if (candidates.size() > 0)
-    {
-      while (candidates.GetNextItem(cand_ws, selected_candidate))
-      {
-        if (enable_mcast_opportunistic_fwding_)
-        {
-          McastOpportunisticForwarding(selected_candidate);
-        }
-        // We have at least one packet and the next gradient is strictly smaller.
-        LogD(kClassName, __func__,
-             "Selected candidate #%" PRIu8 " %s.\n",
-             num_solutions + 1,
-             selected_candidate.ToString().c_str());
-        if (!selected_candidate.is_valid)
-        {
-          LogE(kClassName, __func__,
-               "Invalid candidate in candidates list.\n");
-          continue;
-        }
-        if (selected_candidate.pkt)
-        {
-          solutions[num_solutions].pkt  = queue_store_->GetBinQueueMgr(
-            selected_candidate.bin_idx)->DequeueAtIterator(
-              selected_candidate.pkt->GetLatencyClass(),
-              selected_candidate.dequeue_loc, selected_candidate.dst_vec);
-
-          if (solutions[num_solutions].pkt->HasQueuingDelay())
-          {
-            AddDelayToAverage(Time::GetNowInUsec() -
-              solutions[num_solutions].pkt->recv_time().GetTimeInUsec(),
-              selected_candidate.bin_idx);
-          }
-        }
-        else
-        {
-          // This is a packetless Zombie.
-          solutions[num_solutions].pkt =
-            (selected_candidate.q_mgr)->Dequeue(
-              selected_candidate.latency_class,
-              selected_candidate.virtual_len,
-              selected_candidate.dst_vec);
-
-          if (!solutions[num_solutions].pkt)
-          {
-            if (selected_candidate.dst_vec == 0)
-            {
-              LogE(kClassName, __func__,
-                   "Failed to dequeue %s packet of size %zdB from queue of %zdB.\n",
-                   LatencyClass_Name[selected_candidate.latency_class].c_str(),
-                   selected_candidate.virtual_len,
-                   (selected_candidate.q_mgr)->GetNextDequeueSize(
-                     selected_candidate.latency_class));
-            }
-            else
-            {
-              LogE(kClassName, __func__,
-                   "Failed to dequeue %s packet of size %zdB from "
-                   "multicast zombie queue.\n",
-                   LatencyClass_Name[selected_candidate.latency_class].c_str(),
-                   selected_candidate.virtual_len);
-            }
-            break;
-          }
-        }
-
-        if (solutions[num_solutions].pkt == NULL)
-        {
-          LogF(kClassName, __func__, "Error dequeuing a packet.\n");
-          continue;
-        }
-
-        solutions[num_solutions].bin_idx          = selected_candidate.bin_idx;
-        solutions[num_solutions].path_ctrl_index  = selected_candidate.path_ctrl_index;
-
-        path_ctrl_size[selected_candidate.path_ctrl_index] +=
-          selected_candidate.virtual_len;
-        max_bytes                                          -=
-          selected_candidate.virtual_len;
-
-        ++num_solutions;
-
-        if (!multi_deq_ ||
-          (path_ctrl_size[solutions[num_solutions - 1].path_ctrl_index] >
-            static_cast<int32_t>(xmit_buf_max_thresh_)) ||
-          (num_solutions >= max_num_solutions))
-        {
-          LogD(kClassName, __func__,
-               "End packet selections%s%s%s.\n",
-               multi_deq_ ? "" : "; no multi-dequeue",
-               path_ctrl_size[solutions[num_solutions - 1].path_ctrl_index] >
-                static_cast<int32_t>(xmit_buf_max_thresh_) ? "; path ctrl full" : "",
-               num_solutions >= max_num_solutions ?
-                "; max num solutions reached" : "");
-          break;
-        }
-      }
-      // Return for now.  TODO: Go back in, and explore the following gradients
-      // for more solutions.
-      return num_solutions;
-    }
-    else if (cand_bytes_found > 0)
-    {
-      // We found and dropped a packetless zombie candidate.
-      return num_solutions;
-    }
-  } // END finding a packet for the low-latency traffic.
-  // *** END Low-Latency Solution ***
-
-  LogD(kClassName, __func__,
-       "Did not find candidate for priority dequeue traffic types.\n");
-
-  candidates.Clear();
-
-  grad_ws.PrepareForWalk();
-  max_bytes = 1;
-
-  // *** Regular Solution ***
-  // Now treat regular and Zombie packets.
-  while (gradients.GetNextItem(grad_ws, gradient))
-  {
-    if (!path_ctrls_[gradient.path_ctrl_index].path_ctrl)
-    {
-      continue;
-    }
-
-    if ((gradient.value <= 0) || (!candidates.Empty()))
-    {
-      // No positive gradient, or gradient is smaller.  Nothing from here on.
-      break;
-    }
-
-    max_bytes = 1;
-
-    LogD(kClassName, __func__,
-         "Exploring gradient %" PRId64 "B to bin_id %s on path ctrl %"
-         PRIu8 " to nbr %" PRIBinId " / %" PRIBinId " (%s) for dsts 0x%X.\n",
-         gradient.value,
-         bin_map_.GetIdToLog(gradient.bin_idx).c_str(),
-         gradient.path_ctrl_index,
-         bin_map_.GetPhyBinId(
-           path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_idx()),
-         path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_id(),
-         gradient.is_dst ? "is_dst" : "not dst",
-         gradient.dst_vec);
-
-    int32_t num_bytes_left_on_pc =
-      static_cast<int32_t>(xmit_buf_max_thresh_) -
-        path_ctrl_size[gradient.path_ctrl_index];
-
-    if (multi_deq_)
-    {
-      // Note: The previous approach consisted in allowing to dequeue as least as
-      // many bytes as the gap between the two largest gradients, and only 1B
-      // when they were equal.  This was observed to be too conservative and led
-      // to self-limiting low dequeue-rates.
-      //
-      // We now attempt to fill the path controller's transmit buffer.
-      max_bytes = num_bytes_left_on_pc;
-    }
-
-    LogD(kClassName, __func__,
-         "Allow %" PRId32 "B max to be dequeued at once."
-         "\n",
-         max_bytes);
-
-    // Figure out if a bin already has a normal latency solution.  If so, then
-    // we should not look at Zombie packets for this bin.  If this solution has
-    // been investigated and then replaced, we still would have no reason to
-    // look at the Zombie packet.
-    // TODO: Should this be here, or can we include both normal and zombie
-    // candidates if they fit?
-
-    LatencyClass  ttype;
-    for (uint8_t ttype_i = 0;
-      ttype_i < num_standard_dequeue_ttypes_; ++ttype_i)
-    {
-      if ((!bin_map_.IsMcastBinIndex(gradient.bin_idx)) ||
-          (gradient.is_zombie == false))
-      {
-        ttype = standard_dequeue_ttypes_[ttype_i];
-      }
-      else
-      {
-        ttype = standard_dequeue_ttypes_zombies_first_[ttype_i];
-      }
-      // For zombie ttypes, only return enough bytes to make up the difference
-      // between what we've found so far and what we need. Otherwise, it's ok
-      // to get max_bytes of real packets for each gradient and sort it out
-      // later.
-      uint32_t to_find = static_cast<uint32_t>(max_bytes);
-      if (Packet::IsZombie(ttype))
-      {
-        if (to_find > cand_bytes_found)
-        {
-          to_find -= cand_bytes_found;
-        }
-        else
-        {
-          break;
-        }
-      }
-      if (!bin_map_.IsMcastBinIndex(gradient.bin_idx))
-      {
-        cand_bytes_found += FindUcastPacketsForGradient(
-          gradient, ttype, now, false, candidates, to_find);
-      }
-      else
-      {
-        cand_bytes_found += FindMcastPacketsForGradient(
-          gradient, ttype, candidates, to_find);
-      }
-    }
-
-    if (cand_bytes_found > 0)
-    {
-      // For now, don't combine multiple gradients (i.e., multiple
-      // destinations or path controllers) in the same set of results.
-      // TODO: consider removing this condition later, but we'll need some
-      // extra conditions to evaluate max_bytes with consideration for how
-      // many packets we already picked for a particular path controller.
-      break;
-    }
-
-    // Otherwise, look at the case when the next gradient is equal.
-  } // END treating normal and Zombie packets.
-  // *** END Regular Solution ***
-
-  // We have explored all packets that could match this gradient.
-  if (candidates.size() > 0)
-  {
-    TransmitCandidate                               selected_candidate;
-    OrderedList<TransmitCandidate, Time>::WalkState cand_ws;
-    cand_ws.PrepareForWalk();
-
-    while (candidates.GetNextItem(cand_ws, selected_candidate))
-    {
-      // We have at least one packet and the next gradient is strictly smaller.
-      LogD(kClassName, __func__,
-           "Selected candidate %s.\n",
-           selected_candidate.ToString().c_str());
-      if (!selected_candidate.is_valid)
-      {
-        LogE(kClassName, __func__, "Invalid candidate in candidates list.\n");
-        continue;
-      }
-      if (selected_candidate.pkt)
-      {
-        if (enable_mcast_opportunistic_fwding_)
-        {
-          McastOpportunisticForwarding(selected_candidate);
-        }
-        solutions[num_solutions].pkt  =
-          (selected_candidate.q_mgr)->DequeueAtIterator(
-            selected_candidate.pkt->GetLatencyClass(),
-            selected_candidate.dequeue_loc, selected_candidate.dst_vec);
-        if (!solutions[num_solutions].pkt)
-        {
-          LogF(kClassName, __func__, "DequeueAtIterator returned null.\n");
-        }
-        if (bin_map_.IsMcastBinIndex(selected_candidate.bin_idx))
-        {
-          if (solutions[num_solutions].pkt != selected_candidate.pkt)
-          {
-            // If the packet is multicast and the dequeue gave us a different
-            // packet than the selected candidate, it means that it was cloned.
-            // Switch to the clone so that we point to proper destination bit
-            // vector.
-            selected_candidate.pkt  = solutions[num_solutions].pkt;
-          }
-          LogD(kClassName, __func__,
-               "Dequeued mcast packet %s for bin %s: %s\n",
-               solutions[num_solutions].pkt->GetPacketMetadataString().c_str(),
-               selected_candidate.id_to_log.c_str(),
-               selected_candidate.ToString().c_str());
-        }
-        if (solutions[num_solutions].pkt->HasQueuingDelay())
-        {
-          // HasQueuingDelay is always false because this is normal
-          // (non-packetless) traffic.
-          AddDelayToAverage(Time::GetNowInUsec() -
-            solutions[num_solutions].pkt->recv_time().GetTimeInUsec(),
-            selected_candidate.bin_idx);
-        }
-      }
-      else
-      {
-        // This is a packetless Zombie.
-        solutions[num_solutions].pkt = (selected_candidate.q_mgr)->Dequeue(
-            selected_candidate.latency_class,
-            selected_candidate.virtual_len,
-            selected_candidate.dst_vec);
-
-        if (!solutions[num_solutions].pkt)
-        {
-          if (selected_candidate.dst_vec == 0)
-          {
-            LogE(kClassName, __func__,
-                 "Failed to dequeue %s packet of size %zdB from queue of %zdB.\n",
-                 LatencyClass_Name[selected_candidate.latency_class].c_str(),
-                 selected_candidate.virtual_len,
-                 (selected_candidate.q_mgr)->GetNextDequeueSize(
-                   selected_candidate.latency_class));
-          }
-          else
-          {
-            LogE(kClassName, __func__,
-                 "Failed to dequeue %s packet of size %zdB from "
-                 "multicast zombie queue.\n",
-                 LatencyClass_Name[selected_candidate.latency_class].c_str(),
-                 selected_candidate.virtual_len);
-          }
-        }
-      }
-      if (solutions[num_solutions].pkt == NULL)
-      {
-        LogF(kClassName, __func__, "Error dequeuing a packet.\n");
-        continue;
-      }
-
-      solutions[num_solutions].bin_idx          = selected_candidate.bin_idx;
-      solutions[num_solutions].path_ctrl_index  =
-        selected_candidate.path_ctrl_index;
-
-      path_ctrl_size[selected_candidate.path_ctrl_index] +=
-        selected_candidate.virtual_len;
-      max_bytes                                          -=
-        selected_candidate.virtual_len;
-
-      ++num_solutions;
-
-      if (!multi_deq_ ||
-        (path_ctrl_size[solutions[num_solutions - 1].path_ctrl_index] >
-          static_cast<int32_t>(xmit_buf_max_thresh_)) ||
-        (max_bytes <= 0) ||
-        (num_solutions >= max_num_solutions))
-      {
-        LogD(kClassName, __func__,
-             "End packet selections:%s%s%s%s.\n",
-             multi_deq_ ? "" : " no multi-dequeue",
-             path_ctrl_size[solutions[num_solutions - 1].path_ctrl_index] >
-              static_cast<int32_t>(xmit_buf_max_thresh_) ? "; path ctrl full"
-              : "",
-             max_bytes <= 0 ? "; num bytes reached" : "",
-             num_solutions >= max_num_solutions ?
-              "; max num solutions reached" : "");
-        break;
-      }
-    }
     return num_solutions;
   }
 
-  LogD(kClassName, __func__,
-       "Found no solution, nothing dequeued.\n");
-  return 0;
+  // Step S6 from the packet forwarder description in the BPF design
+  // documentation, find normal (latency-insensitive) gradient-based packets.
+  LogD(kClassName, __func__, "Did not find candidate for priority dequeue "
+       "traffic types.\n");
+
+  FindLatencyInsensitivePkts(now, gradients, path_ctrl_q_sizes,
+                             max_num_solutions, solutions, num_solutions);
+
+  if (num_solutions == 0)
+  {
+    LogD(kClassName, __func__, "Found no solution, nothing dequeued.\n");
+  }
+
+  return num_solutions;
 }
 
 //============================================================================
-void UberFwdAlg::ComputeOneBinGradient(
+void BPDequeueAlg::ComputeOneBinGradient(
   BinIndex bin, PathController* path_ctrl,
   QueueDepths* my_qd_for_bin, QueueDepths* nbr_qd_for_bin,
   QueueDepths* my_v_queue_depth, QueueDepths* nbr_v_queue_depth,
@@ -1675,7 +773,7 @@ void UberFwdAlg::ComputeOneBinGradient(
 }
 
 //============================================================================
-void UberFwdAlg::ComputeMulticastGradient(
+void BPDequeueAlg::ComputeMulticastGradient(
   PathController* path_ctrl,
   QueueDepths* my_qd_for_bin, QueueDepths* nbr_qd_for_bin,
   QueueDepths* my_v_queue_depth, QueueDepths* nbr_v_queue_depth,
@@ -1714,23 +812,6 @@ void UberFwdAlg::ComputeMulticastGradient(
     // node itself, so be mindful of that when computing gradients.
     if (my_qd_for_bin->GetBinDepthByIdx(dst_idx) > 0)
     {
-      if (exclude_infinite_paths_)
-      {
-        uint32_t  latency_us[kMaxPathCtrls];
-        memset(latency_us, 0, sizeof(latency_us));
-        // Get the latency to the destination bin to find infinite paths.
-        bpfwder_.GetPerPcLatencyToDst(dst_idx, (uint32_t*) latency_us, false);
-
-        if (latency_us[path_ctrl->path_controller_number()] == UINT32_MAX)
-        {
-          LogD(kClassName, __func__,
-               "Excluding destination %s through nbr %" PRIBinId " because "
-               "it is an infinite path.\n",
-               bin_map_.GetIdToLog(dst_idx).c_str(),
-               path_ctrl->remote_bin_id());
-          continue;
-        }
-      }
       LogD(kClassName, __func__,
            "Including bin %" PRIBinId " (index %" PRIBinIndex ") in mcast "
            "gradient, because it has a non-zero queue depth %" PRIu32 "B.\n",
@@ -1762,8 +843,8 @@ void UberFwdAlg::ComputeMulticastGradient(
         }
         else
         {
-          zombie_gradient.value           += differential;
-          zombie_send_to                   = bin_map_.AddBinToDstVec(send_to,
+          zombie_gradient.value    += differential;
+          zombie_send_to            = bin_map_.AddBinToDstVec(zombie_send_to,
                                                                      dst_idx);
           LogD(kClassName, __func__,
                "Zombie With differential %" PRId64 "B (hysteresis %uB), adding bin "
@@ -1794,7 +875,7 @@ void UberFwdAlg::ComputeMulticastGradient(
         else
         {
           zombie_ls_gradient.value += ls_differential;
-          zombie_ls_send_to = bin_map_.AddBinToDstVec(ls_send_to, dst_idx);
+          zombie_ls_send_to = bin_map_.AddBinToDstVec(zombie_ls_send_to, dst_idx);
           LogD(kClassName, __func__,
                "With Zombie LS differential %" PRId64 "B (hysteresis %uB), "
                "adding bin index %" PRIBinIndex " to LS dst vec, now 0x%X.\n",
@@ -1815,22 +896,50 @@ void UberFwdAlg::ComputeMulticastGradient(
        ", non zombie: %" PRId64 "\n", zombie_gradient.value, gradient.value);
 
   // Set the gradient and destination bit vector.
-  if (zombie_gradient.value <= gradient.value)
+
+  // If the gradient (which at this point only includes contributions
+  // from destinations with physical packets) is greater or equal to the
+  // the zombie_gradient (which only includes contributions from zombies)
+  // then we choose to dequeue physical packets rather than zombies
+
+  //if (true) //-- use this and uncomment out the gradient assignment below
+  // to run the orig ZLR algorithm
+  if (gradient.value >= zombie_gradient.value)
   {
-    gradient.dst_vec      = send_to;
-    ls_gradient.dst_vec   = ls_send_to;
-    gradient.is_zombie    = false;
-    ls_gradient.is_zombie = false;
-    gradient.value       += zombie_gradient.value;
+    // gradient.value  += zombie_gradient.value;
+    gradient.dst_vec    = send_to;
+    gradient.is_zombie  = false;
   }
+
+  // Else the zombie gradient value is greater than that for just the
+  // physical packets and so we instead choose to dequeue zombies
+
   else
   {
-    gradient.value       += zombie_gradient.value;
-    gradient.dst_vec      = zombie_send_to;
-    ls_gradient.dst_vec   = zombie_ls_send_to;
-    gradient.is_zombie    = true;
-    ls_gradient.is_zombie = true;
+    gradient.value     = zombie_gradient.value;
+    gradient.dst_vec   = zombie_send_to;
+    gradient.is_zombie = true;
     LogD(kClassName, __func__, "Using zombie gradient.\n");
+  }
+
+  //if (true) //-- use this and uncomment out the gradient assignment below
+  // to run the orig ZLR algorithm
+  if (ls_gradient.value >= zombie_ls_gradient.value)
+  {
+    //ls_gradient.value   += zombie_ls_gradient.value;
+    ls_gradient.dst_vec    = ls_send_to;
+    ls_gradient.is_zombie  = false;
+  }
+
+  // Else the zombie ls gradient value is greater than that for just the
+  // physical ls packets and we instead choose to dequeue ls zombies
+
+  else
+  {
+    ls_gradient.value     = zombie_ls_gradient.value;
+    ls_gradient.dst_vec   = zombie_ls_send_to;
+    ls_gradient.is_zombie = true;
+    LogD(kClassName, __func__, "Using zombie ls gradient.\n");
   }
 
   LogD(kClassName, __func__, "Multicast gradient for bin %s, "
@@ -1841,9 +950,959 @@ void UberFwdAlg::ComputeMulticastGradient(
 }
 
 //============================================================================
-bool UberFwdAlg::IsHistoryConstrained(Packet* pkt, iron::Time& ttg,
-                                      uint32_t* latencies_us,
-                                      size_t num_latencies)
+bool BPDequeueAlg::ZombifyAndCriticalizePkts(
+  const Time& now, size_t max_num_path_ctrls, int32_t* path_ctrl_q_sizes,
+  TransmitCandidate& candidate)
+{
+  // Steps S1 and S2 from the packet forwarder description in the BPF design
+  // documentation.
+  //
+  // Zombify pkts in Critical & Low-Lat queues. In the process, if we find a
+  // critical candidate that can be sent over an interface that is currently
+  // available send it.
+  Time  ttg;
+  ttg.SetInfinite();
+  candidate.ttg.SetInfinite();
+
+  size_t  min_lat_pc_index = 0;
+
+  for (uint8_t path_ctrl_idx = 0; path_ctrl_idx < max_num_path_ctrls;
+       ++path_ctrl_idx)
+  {
+    path_ctrl_q_sizes[path_ctrl_idx] = -1;
+  }
+
+  // Iterate through the bins to clean them up, i.e., Criticalize, Zombify, get
+  // some time-to-reach.
+  //
+  // MCAST TODO: This is just cleaning up unicast bins at the
+  //             moment. Eventually we probably want to include multicast bins
+  //             as well.
+  BinQueueMgr*  q_mgr = NULL;
+
+  BinIndex  dst_bin_idx = 0;
+  for (bool dst_bin_idx_valid = bin_map_.GetFirstUcastBinIndex(dst_bin_idx);
+       !base_ && dst_bin_idx_valid;
+       dst_bin_idx_valid = bin_map_.GetNextUcastBinIndex(dst_bin_idx))
+  {
+    q_mgr = queue_store_->GetBinQueueMgr(dst_bin_idx);
+
+    // Print the BinQueueMgr to see the make up of our queues. Note this is a
+    // little different than the BP values used for gradients (watch out for
+    // NPLB).
+    q_mgr->Print();
+
+    if (!(q_mgr->ContainsLSNonZombies()))
+    {
+      // A packet coming to this queue would experience no delay. Add to
+      // average.
+      AddDelayToAverage(0, dst_bin_idx);
+    }
+
+    if (q_mgr->depth_packets() == 0)
+    {
+      // There are no packets in the queue (maybe I am the destination),
+      // therefore nothing to do for this bin.
+      continue;
+    }
+
+    uint32_t  latency_us[max_num_path_ctrls];
+    memset(latency_us, 0, sizeof(latency_us));
+
+    Time  min_ttr;
+    min_ttr.SetInfinite();
+
+    if (anti_circ_ == AC_TECH_HEURISTIC_DAG)
+    {
+      // Get the per path controller latency, which is same for all packets of
+      // this bin. Compute best path controller busy-ness.
+      bpfwder_.GetPerPcLatencyToDst(dst_bin_idx, (uint32_t*)latency_us,
+                                    false);
+
+      // Check best path controller queue state: free or busy?
+      if (GetMinLatencyPath(latency_us, num_path_ctrls_, min_lat_pc_index,
+                            min_ttr) &&
+          (path_ctrl_q_sizes[min_lat_pc_index] == -1))
+      {
+        // Not computed yet.
+        PathController*  path_ctrl = path_ctrls_[min_lat_pc_index].path_ctrl;
+
+        if (!path_ctrl)
+        {
+          LogF(kClassName, __func__, "Path controller at index %" PRIu8 " is "
+               "NULL.\n", min_lat_pc_index);
+          return false;
+        }
+
+        size_t  current_pc_queue_size = 0;
+        if (!(path_ctrl->GetXmitQueueSize(current_pc_queue_size)))
+        {
+          // This path controller does not have a current transmit queue size.
+          // Maybe it is still connecting to a peer. Move on.
+          LogD(kClassName, __func__, "Path to nbr %" PRIBinId " is currently "
+               "not accepting packets.\n", path_ctrl->remote_bin_id());
+          current_pc_queue_size = xmit_buf_free_thresh_;
+        }
+
+        path_ctrl_q_sizes[min_lat_pc_index] = current_pc_queue_size;
+
+        if (WouldLogD(kClassName))
+        {
+          if (current_pc_queue_size >= xmit_buf_free_thresh_)
+          {
+            // Path Controller full, will not be able to use this neighbor for
+            // this bin.
+            LogD(kClassName, __func__, "Path to nbr %" PRIBinId " is full (Q "
+                 "(%zd) > %" PRIu32 ") cannot use.\n",
+                 path_ctrl->remote_bin_id(), current_pc_queue_size,
+                 xmit_buf_free_thresh_);
+          }
+          else
+          {
+            LogD(kClassName, __func__, "Lowest lat path to nbr %" PRIBinId
+                 " is currently available.\n", path_ctrl->remote_bin_id());
+          }
+        }
+      }
+    } // End heuristic_dag only.
+
+    // Go through the EF and CRITICAL queues to zombify packets.
+    for (uint8_t ttype_i = 0; ttype_i < num_zombifiable_ttypes_; ++ttype_i)
+    {
+      Packet*       prev_pkt            = NULL;
+      uint32_t      num_available_bytes = 0;
+      LatencyClass  ttype               = zombifiable_ttypes_[ttype_i];
+
+      q_mgr->PrepareIteration(ttype);
+      PacketQueue::QueueWalkState  saved_it;
+
+      // Search inside the queue.
+      while (num_available_bytes < queue_search_depth_)
+      {
+        Packet*  pkt = q_mgr->PeekNext(ttype, saved_it);
+
+        if (!pkt || (prev_pkt == pkt))
+        {
+          LogD(kClassName, __func__, "No pkt for bin %s for traffic type %s "
+               "beyond.\n",  bin_map_.GetIdToLog(dst_bin_idx).c_str(),
+               LatencyClass_Name[ttype].c_str());
+          break;
+        }
+
+        prev_pkt = pkt;
+
+        if (anti_circ_ == AC_TECH_CONDITIONAL_DAG)
+        {
+          // Get the per path controller latency, which is same for all
+          // packets of this bin. Compute best path controller busy-ness.
+          bpfwder_.GetPerPcLatencyToDst(dst_bin_idx, (uint32_t*)latency_us,
+                                        false, pkt);
+
+          // Check best path controller queue state: free or busy?
+          GetMinLatencyPath(latency_us, num_path_ctrls_, min_lat_pc_index,
+                            min_ttr);
+        }
+
+        // Figure out if this packet can still be delivered. Get time to go
+        // from packet.
+        if (pkt->time_to_go_valid())
+        {
+          ttg = pkt->GetTimeToGo() - (now - pkt->recv_time());
+        }
+
+        if (ttg < min_ttr)
+        {
+          // Packet cannot make it on any interface.
+          LogD(kClassName, __func__, "Pkt %p with ttg %s cannot be delivered "
+               "in time on any interface (min_ttr %s). Drop.\n", pkt,
+               ttg.ToString().c_str(), min_ttr.ToString().c_str());
+          pkt = q_mgr->DequeueAtCurrentIterator(ttype);
+
+          if (pkt && pkt->HasQueuingDelay())
+          {
+            AddDelayToAverage(Time::GetNowInUsec() -
+                              pkt->recv_time().GetTimeInUsec(), dst_bin_idx);
+          }
+
+          if (drop_expired_ || !q_mgr->ZombifyPacket(pkt))
+          {
+            bpfwder_.AddDroppedBytes(dst_bin_idx, pkt->virtual_length());
+            TRACK_EXPECTED_DROP(kClassName, packet_pool_);
+            LogD(kClassName, __func__, "Dropped expired packet %p or "
+                 "Zombification failed.\n", pkt);
+            packet_pool_.Recycle(pkt);
+          }
+          continue;
+        }
+
+        if (anti_circ_ == AC_TECH_HEURISTIC_DAG)
+        {
+          // Anti-circulation technique is heuristic_dag, deal with critical.
+          if ((ttype == CRITICAL_LATENCY) && (ttg < candidate.ttg) &&
+              (path_ctrl_q_sizes[min_lat_pc_index] <
+               static_cast<int32_t>(xmit_buf_max_thresh_)))
+          {
+            // Critical packet has tighter deadline and can go on non-busy path
+            // controller.
+            candidate.is_valid        = true;
+            candidate.pkt             = pkt;
+            candidate.bin_idx         = dst_bin_idx;
+            candidate.id_to_log       = bin_map_.GetIdToLog(dst_bin_idx);
+            candidate.ttg             = ttg;
+            candidate.ttr             = min_ttr;
+            candidate.path_ctrl_index = min_lat_pc_index;
+            candidate.dequeue_loc     = saved_it;
+            candidate.q_mgr           = q_mgr;
+            LogD(kClassName, __func__, "Critical packet %p with ttg %s on "
+                 "available path controller %" PRIu8 " overtakes "
+                 "candidates.\n", pkt, ttg.ToString().c_str(),
+                 min_lat_pc_index);
+          }
+
+          if ((ttype == LOW_LATENCY) &&
+              IsHistoryConstrained(pkt, ttg, latency_us, num_path_ctrls_))
+          {
+            // EF packet is history-constrained and not yet in critical. But
+            // this should not prevent us from assessing it as a candidate.
+            pkt = q_mgr->DequeueAtCurrentIterator(ttype);
+
+            if (!q_mgr->CriticalizePacket(pkt))
+            {
+              if (pkt->HasQueuingDelay())
+              {
+                AddDelayToAverage(Time::GetNowInUsec() -
+                                  pkt->recv_time().GetTimeInUsec(),
+                                  dst_bin_idx);
+              }
+
+              TRACK_UNEXPECTED_DROP(kClassName, packet_pool_);
+              LogD(kClassName, __func__, "Dropped packet %p ("
+                   "Criticialization failed).\n", pkt);
+              packet_pool_.Recycle(pkt);
+            }
+            else
+            {
+              if ((ttg < candidate.ttg) &&
+                  (path_ctrl_q_sizes[min_lat_pc_index] <
+                   static_cast<int32_t>(xmit_buf_max_thresh_)))
+              {
+                // This pkt has a tighter deadline.
+                candidate.is_valid        = true;
+                candidate.pkt             = pkt;
+                candidate.bin_idx         = dst_bin_idx;
+                candidate.q_mgr           = q_mgr;
+                candidate.id_to_log       = bin_map_.GetIdToLog(dst_bin_idx);
+                candidate.ttg             = ttg;
+                candidate.ttr             = min_ttr;
+                candidate.path_ctrl_index = min_lat_pc_index;
+                if (!q_mgr->GetIterator(CRITICAL_LATENCY,
+                                        pkt, candidate.dequeue_loc))
+                {
+                  candidate.pkt      = NULL;
+                  candidate.is_valid = false;
+                }
+                LogD(kClassName, __func__, "Low-latency packet %p with ttg "
+                     "%s on available path controller %" PRIu8 " overtakes "
+                     "candidates.\n", pkt, ttg.ToString().c_str(),
+                     min_lat_pc_index);
+              }
+            }
+            continue;
+          }
+        } // End heuristic_dag condition.
+
+        num_available_bytes  += pkt->virtual_length();
+      } // End queue search.
+    } // End Zombifiable iteration.
+  } // End bin iteration clean up. MCAST TODO unicast iteration only.
+    // END Zombification and Criticalization.
+
+  return true;
+}
+
+//============================================================================
+void BPDequeueAlg::ComputeGradients(
+  int32_t* path_ctrl_q_sizes, OrderedList<Gradient, int64_t>& gradients,
+  OrderedList<Gradient, int64_t>& ls_gradients)
+{
+  // Step S4 from the packet forwarder description in the BPF design
+  // documentation.
+  //
+  // First compute the backpressure gradient.
+  for (size_t  path_ctrl_idx = 0; path_ctrl_idx < num_path_ctrls_;
+       ++path_ctrl_idx)
+  {
+    PathController*  path_ctrl = path_ctrls_[path_ctrl_idx].path_ctrl;
+    if (!path_ctrl)
+    {
+      continue;
+    }
+
+    if (!path_ctrl->ready())
+    {
+      LogD(kClassName, __func__, "Not considering unready path ctrl %" PRIu8
+           " (no QLAM received yet).\n", path_ctrl_idx);
+      continue;
+    }
+
+    // Check Path Controller queue state: free or busy?
+    if (path_ctrl_q_sizes[path_ctrl_idx] == -1)
+    {
+      size_t  current_pc_queue_size = 0;
+      if (!(path_ctrl->GetXmitQueueSize(current_pc_queue_size)))
+      {
+        // This path controller does not have a current transmit queue size.
+        // Maybe it is still connecting to a peer. Simply move on.
+        LogD(kClassName, __func__, "Path to nbr %" PRIBinId " currently has "
+             "no queue.\n", path_ctrl->remote_bin_id());
+        continue;
+      }
+
+      path_ctrl_q_sizes[path_ctrl_idx] = current_pc_queue_size;
+
+      if (WouldLogD(kClassName))
+      {
+        if (current_pc_queue_size >=
+            static_cast<size_t>(xmit_buf_free_thresh_))
+        {
+          // Path Controller transmit queue is full, will not be able to use
+          // this neighbor for this bin.
+          LogD(kClassName, __func__, "Path to nbr %" PRIBinId " is full (Q "
+               "(%zd) > %" PRIu32 "B) cannot use.\n",
+               path_ctrl->remote_bin_id(), current_pc_queue_size,
+               xmit_buf_free_thresh_);
+        }
+        else
+        {
+          LogD(kClassName, __func__, "Path to nbr %" PRIBinId " is "
+               "available.\n", path_ctrl->remote_bin_id());
+        }
+      }
+    }
+
+    if (path_ctrl_q_sizes[path_ctrl_idx] >=
+        static_cast<int32_t>(xmit_buf_free_thresh_))
+    {
+      // The path controller is busy.
+      LogD(kClassName, __func__, "Skip busy path ctrl %" PRIu8 " to nbr %"
+           PRIBinId ".\n", path_ctrl_idx, path_ctrl->remote_bin_id());
+      continue;
+    }
+
+    // Iterate through bins and compute the differential for each, including
+    // unicast and multicast destination bins.
+    BinIndex  dst_bin_idx = kInvalidBinIndex;
+    for (bool dst_bin_idx_valid = bin_map_.GetFirstDstBinIndex(dst_bin_idx);
+         dst_bin_idx_valid;
+         dst_bin_idx_valid = bin_map_.GetNextDstBinIndex(dst_bin_idx))
+    {
+      LogD(kClassName, __func__, "=========== Nbr %" PRIBinId " (%" PRIBinId
+           "), Dst Bin %s ================\n",
+           bin_map_.GetPhyBinId(path_ctrl->remote_bin_idx()),
+           path_ctrl->remote_bin_id(),
+           bin_map_.GetIdToLog(dst_bin_idx).c_str());
+
+      if (!base_)
+      {
+        has_prio_ttypes_[dst_bin_idx] = queue_store_->GetBinQueueMgr(
+          dst_bin_idx)->ContainsPacketsWithTtypes(
+            priority_dequeue_ttypes_, num_priority_dequeue_ttypes_);
+      }
+
+      if (queue_store_->GetBinQueueMgr(dst_bin_idx)->depth_packets() == 0)
+      {
+        LogD(kClassName, __func__, "My queue to Bin %s is empty, go on to "
+             "next bin.\n", bin_map_.GetIdToLog(dst_bin_idx).c_str());
+
+        // There are no packets in the queue (maybe I am the destination),
+        // therefore nothing to do for this bin.
+        continue;
+      }
+
+      // Get neighbor queue depths.
+      QueueDepths*  nbr_queue_depth = queue_store_->GetBinQueueMgr(
+        dst_bin_idx)->GetNbrQueueDepths(path_ctrl->remote_bin_idx());
+      // NULL check done when computing gradients.
+
+      // Get neighbor virtual queue depths.
+      QueueDepths*  nbr_v_queue_depth =
+        queue_store_->PeekNbrVirtQueueDepths(path_ctrl->remote_bin_idx());
+
+      Gradient  gradient;
+      gradient.bin_idx         = dst_bin_idx;
+      gradient.path_ctrl_index = path_ctrl_idx;
+      gradient.is_dst          = false;
+      gradient.dst_vec         = 0;
+
+      Gradient ls_gradient;
+      ls_gradient.bin_idx         = dst_bin_idx;
+      ls_gradient.path_ctrl_index = path_ctrl_idx;
+      ls_gradient.is_dst          = false;
+      ls_gradient.dst_vec         = 0;
+
+      // Note that GetVirtQueueDepths returns the reference to the virtual
+      // QueueDepths object, therefore we need not check its return for NULL.
+      if (bin_map_.IsMcastBinIndex(gradient.bin_idx))
+      {
+        // This function will return the per-destination gradients, which are
+        // only used after we pick the multicast group and path controller.
+        ComputeMulticastGradient(
+          path_ctrl, queue_store_->GetQueueDepthsForBpf(dst_bin_idx),
+          nbr_queue_depth, queue_store_->GetVirtQueueDepths(),
+          nbr_v_queue_depth, gradient, ls_gradient);
+      }
+      else
+      {
+        ComputeOneBinGradient(dst_bin_idx, path_ctrl,
+                              queue_store_->GetQueueDepthsForBpf(dst_bin_idx),
+                              nbr_queue_depth,
+                              queue_store_->GetVirtQueueDepths(),
+                              nbr_v_queue_depth, gradient.is_dst,
+                              gradient.value, ls_gradient.value);
+
+        if (gradient.value <=
+            (gradient.is_dst ? 0 : static_cast<int64_t>(hysteresis_)))
+        {
+          LogD(kClassName, __func__, "Ucast gradient %" PRId64 "B is below "
+               "hysteresis, setting to 0B.\n", gradient.value);
+          gradient.value = 0;
+        }
+
+        if (ls_gradient.value <= static_cast<int64_t>(hysteresis_))
+        {
+          LogD(kClassName, __func__, "Ucast LS gradient %" PRId64 "B is "
+               "below hysteresis, setting to 0B.\n", ls_gradient.value);
+          ls_gradient.value = 0;
+        }
+
+        ls_gradient.is_dst = gradient.is_dst;
+      }
+
+      // Gradient value is given +1 if goes to destination directly to give
+      // it preference.
+      if (gradient.value > 0)
+      {
+        gradients.Push(gradient, gradient.value + (gradient.is_dst? 1 : 0));
+        LogD(kClassName, __func__, "Found %s gradient %" PRId64 "B on (bin "
+             "%s, pc %" PRIu8 ") %s 0x%X.\n",
+             (gradient.dst_vec == 0 ? "unicast" : "multicast"),
+             gradient.value, bin_map_.GetIdToLog(dst_bin_idx).c_str(),
+             path_ctrl_idx, gradient.is_dst ? "to dst" : "not to dst",
+             gradient.dst_vec);
+      }
+      else
+      {
+        LogD(kClassName, __func__, "%s gradient %dB is negative or below "
+             "hysteresis %" PRIu32 "B.\n",
+             (gradient.dst_vec == 0 ? "Unicast" : "Multicast"),
+             gradient.value, hysteresis_);
+      }
+
+      // Gradient value is given +1 if goes to destination directly to give it
+      // preference.
+      if (ls_gradient.value > 0)
+      {
+        ls_gradients.Push(ls_gradient,
+                          ls_gradient.value + (ls_gradient.is_dst? 1 : 0));
+        LogD(kClassName, __func__, "Found LS gradient %" PRId64 "B on (bin "
+             "%s, pc %" PRIu8 ") %s 0x%X.\n",
+             ls_gradient.value, bin_map_.GetIdToLog(dst_bin_idx).c_str(),
+             path_ctrl_idx, ls_gradient.is_dst ? "to dst" : "not to dst",
+             ls_gradient.dst_vec);
+      }
+      else
+      {
+        LogD(kClassName, __func__, "LS gradient %dB is negative or below "
+             "hysteresis %" PRIu32 "B.\n", ls_gradient.value, hysteresis_);
+      }
+    } // End bin iterations.
+  } // END gradient computations.
+}
+
+//============================================================================
+void BPDequeueAlg::FindLatencySensitivePkts(
+  const Time& now, OrderedList<Gradient, int64_t>* ef_gradients,
+  int32_t* path_ctrl_q_sizes, uint8_t max_num_solutions,
+  TxSolution* solutions, uint8_t& num_solutions)
+{
+  // Step S5 from the packet forwarder description in the BPF design
+  // documentation, find latency-sensitive gradient-based packets.
+  int32_t                                    max_bytes        = 1;
+  uint32_t                                   cand_bytes_found = 0;
+  Gradient                                   gradient;
+  OrderedList<TransmitCandidate, Time>       candidates(iron::LIST_INCREASING);
+  OrderedList<Gradient, int64_t>::WalkState  grad_ws;
+
+  for (uint8_t ttype_i = 0; ttype_i < num_priority_dequeue_ttypes_; ++ttype_i)
+  {
+    LatencyClass  ttype = priority_dequeue_ttypes_[ttype_i];
+
+    // TODO: If no packet in the EF class, skip.
+
+    grad_ws.PrepareForWalk();
+
+    while (ef_gradients->GetNextItem(grad_ws, gradient))
+    {
+      if (!path_ctrls_[gradient.path_ctrl_index].path_ctrl ||
+          !has_prio_ttypes_[gradient.bin_idx])
+      {
+        LogD(kClassName, __func__, "No priority ttype in this queue, "
+             "skipping gradient %" PRIu32 "B.\n", gradient.value);
+        continue;
+      }
+
+      if ((gradient.value <= 0) || (!candidates.Empty()))
+      {
+        // No positive gradient, or we already have candidates.
+        break;
+      }
+
+      // TODO: Can we call this once at the start of the function, instead of
+      // calling it for each latency class?
+      max_bytes = 1;
+
+      LogD(kClassName, __func__, "Exploring gradient %" PRId64 "B to bin_id "
+           "%s on path ctrl %" PRIu8 " to nbr %" PRIBinId " / %" PRIBinId
+           " (%s).\n", gradient.value,
+           bin_map_.GetIdToLog(gradient.bin_idx).c_str(),
+           gradient.path_ctrl_index,
+           bin_map_.GetPhyBinId(
+             path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_idx()),
+           path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_id(),
+           gradient.is_dst ? "is_dst" : "not dst");
+
+      int32_t num_bytes_left_on_pc =
+        static_cast<int32_t>(xmit_buf_max_thresh_) -
+          path_ctrl_q_sizes[gradient.path_ctrl_index];
+
+      if (multi_deq_)
+      {
+        // Note: The previous approach consisted in allowing to dequeue as least as
+        // many bytes as the gap between the two largest gradients, and only 1B
+        // when they were equal.  This was observed to be too conservative and led
+        // to self-limiting low dequeue-rates.
+        //
+        // We now attempt to fill the path controller's transmit buffer.
+        max_bytes = num_bytes_left_on_pc;
+      }
+
+      LogD(kClassName, __func__, "Allow %" PRId32 "B max to be dequeued at "
+           "once.\n", max_bytes);
+
+      // For zombie ttypes, only return enough bytes to make up the difference
+      // between what we've found so far and what we need. Otherwise, it's ok
+      // to get max_bytes of real packets for each gradient and sort it out
+      // later.
+      uint32_t to_find = static_cast<uint32_t>(max_bytes);
+      if (Packet::IsZombie(ttype))
+      {
+        if (to_find > cand_bytes_found)
+        {
+          to_find -= cand_bytes_found;
+        }
+        else
+        {
+          break;
+        }
+      }
+
+      if (!bin_map_.IsMcastBinIndex(gradient.bin_idx))
+      {
+        cand_bytes_found += FindUcastPacketsForGradient(
+          gradient, ttype, now, !base_, candidates, to_find);
+      }
+      else if (ttype_i == 0)
+      {
+        const LatencyClass*  dequeue_order = NULL;
+        if (gradient.is_zombie == true)
+        {
+         // The zombie gradient is larger, so find zombie solutions first.
+          dequeue_order = priority_dequeue_ttypes_zombies_first_;
+        }
+        else
+        {
+          dequeue_order = priority_dequeue_ttypes_;
+        }
+
+        for (uint8_t ttype_j = 0; ttype_j < num_priority_dequeue_ttypes_;
+             ++ttype_j)
+        {
+          LatencyClass  mcast_ttype = dequeue_order[ttype_j];
+          cand_bytes_found += FindMcastPacketsForGradient(
+            gradient, mcast_ttype, false, candidates, to_find);
+        }
+      }
+    }
+
+    // We have explored all packets that could match this gradient.
+    TransmitCandidate                                selected_candidate;
+    OrderedList<TransmitCandidate, Time>::WalkState  cand_ws;
+    cand_ws.PrepareForWalk();
+
+    if (candidates.size() > 0)
+    {
+      while (candidates.GetNextItem(cand_ws, selected_candidate))
+      {
+        if (enable_mcast_opportunistic_fwding_ &&
+	    bin_map_.IsMcastBinIndex(gradient.bin_idx) &&
+	    selected_candidate.pkt)
+        {
+          McastOpportunisticForwarding(selected_candidate);
+        }
+
+        // We have at least one packet and the next gradient is strictly smaller.
+        LogD(kClassName, __func__, "Selected candidate #%" PRIu8 " %s.\n",
+             num_solutions + 1, selected_candidate.ToString().c_str());
+
+        if (!selected_candidate.is_valid)
+        {
+          LogE(kClassName, __func__, "Invalid candidate in candidates "
+               "list.\n");
+          continue;
+        }
+
+        if (selected_candidate.pkt)
+        {
+          solutions[num_solutions].pkt  = queue_store_->GetBinQueueMgr(
+            selected_candidate.bin_idx)->DequeueAtIterator(
+              selected_candidate.pkt->GetLatencyClass(),
+              selected_candidate.dequeue_loc, selected_candidate.dst_vec);
+
+          if (solutions[num_solutions].pkt->HasQueuingDelay())
+          {
+            AddDelayToAverage(Time::GetNowInUsec() -
+              solutions[num_solutions].pkt->recv_time().GetTimeInUsec(),
+              selected_candidate.bin_idx);
+          }
+        }
+        else
+        {
+          // This is a packetless Zombie.
+          solutions[num_solutions].pkt =
+            (selected_candidate.q_mgr)->Dequeue(
+              selected_candidate.latency_class,
+              selected_candidate.virtual_len, selected_candidate.dst_vec);
+
+          if (!solutions[num_solutions].pkt)
+          {
+            if (selected_candidate.dst_vec == 0)
+            {
+              LogE(kClassName, __func__, "Failed to dequeue %s packet of "
+                   "size %zdB from queue of %zdB.\n",
+                   LatencyClass_Name[selected_candidate.latency_class].c_str(),
+                   selected_candidate.virtual_len,
+                   (selected_candidate.q_mgr)->GetNextDequeueSize(
+                     selected_candidate.latency_class));
+            }
+            else
+            {
+              LogE(kClassName, __func__, "Failed to dequeue %s packet of "
+                   "size %zdB from multicast zombie queue.\n",
+                   LatencyClass_Name[selected_candidate.latency_class].c_str(),
+                   selected_candidate.virtual_len);
+            }
+            break;
+          }
+        }
+
+        if (solutions[num_solutions].pkt == NULL)
+        {
+          LogF(kClassName, __func__, "Error dequeuing a packet.\n");
+          continue;
+        }
+
+        solutions[num_solutions].bin_idx         = selected_candidate.bin_idx;
+        solutions[num_solutions].path_ctrl_index = selected_candidate.path_ctrl_index;
+
+        path_ctrl_q_sizes[selected_candidate.path_ctrl_index] +=
+          selected_candidate.virtual_len;
+        max_bytes -= selected_candidate.virtual_len;
+
+        ++num_solutions;
+
+        if (!multi_deq_ ||
+          (path_ctrl_q_sizes[solutions[num_solutions - 1].path_ctrl_index] >
+            static_cast<int32_t>(xmit_buf_max_thresh_)) ||
+          (num_solutions >= max_num_solutions))
+        {
+          LogD(kClassName, __func__, "End packet selections%s%s%s.\n",
+               multi_deq_ ? "" : "; no multi-dequeue",
+               path_ctrl_q_sizes[solutions[num_solutions - 1].path_ctrl_index] >
+                static_cast<int32_t>(xmit_buf_max_thresh_) ?
+               "; path ctrl full" : "",
+               num_solutions >= max_num_solutions ?
+               "; max num solutions reached" : "");
+          break;
+        }
+      }
+
+      // Return for now.  TODO: Go back in, and explore the following gradients
+      // for more solutions.
+      return;
+    }
+    else if (cand_bytes_found > 0)
+    {
+      // We found and dropped a packetless zombie candidate.
+      return;
+    }
+  } // END finding a packet for the low-latency traffic.
+  // *** END Low-Latency Solution ***
+}
+
+//============================================================================
+void BPDequeueAlg::FindLatencyInsensitivePkts(
+  const Time& now, OrderedList<Gradient, int64_t>& gradients,
+  int32_t* path_ctrl_q_sizes, uint8_t max_num_solutions,
+  TxSolution* solutions, uint8_t& num_solutions)
+{
+  int32_t                                    max_bytes        = 1;
+  uint32_t                                   cand_bytes_found = 0;
+  Gradient                                   gradient;
+  OrderedList<TransmitCandidate, Time>       candidates(iron::LIST_INCREASING);
+  OrderedList<Gradient, int64_t>::WalkState  grad_ws;
+
+  grad_ws.PrepareForWalk();
+  max_bytes = 1;
+
+  // Step S6 from the packet forwarder description in the BPF design
+  // documentation, find normal (latency-insensitive) gradient-based packets.
+  //
+  // *** Regular Solution ***
+  // Now treat regular and Zombie packets.
+  while (gradients.GetNextItem(grad_ws, gradient))
+  {
+    if (!path_ctrls_[gradient.path_ctrl_index].path_ctrl)
+    {
+      continue;
+    }
+
+    if ((gradient.value <= 0) || (!candidates.Empty()))
+    {
+      // No positive gradient, or gradient is smaller.  Nothing from here on.
+      break;
+    }
+
+    max_bytes = 1;
+
+    LogD(kClassName, __func__, "Exploring gradient %" PRId64 "B to bin_id %s "
+         "on path ctrl %" PRIu8 " to nbr %" PRIBinId " / %" PRIBinId " (%s) "
+         "for dsts 0x%X.\n", gradient.value,
+         bin_map_.GetIdToLog(gradient.bin_idx).c_str(),
+         gradient.path_ctrl_index,
+         bin_map_.GetPhyBinId(
+           path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_idx()),
+         path_ctrls_[gradient.path_ctrl_index].path_ctrl->remote_bin_id(),
+         gradient.is_dst ? "is_dst" : "not dst", gradient.dst_vec);
+
+    int32_t num_bytes_left_on_pc =
+      static_cast<int32_t>(xmit_buf_max_thresh_) -
+      path_ctrl_q_sizes[gradient.path_ctrl_index];
+
+    if (multi_deq_)
+    {
+      // Note: The previous approach consisted in allowing to dequeue as least as
+      // many bytes as the gap between the two largest gradients, and only 1B
+      // when they were equal.  This was observed to be too conservative and led
+      // to self-limiting low dequeue-rates.
+      //
+      // We now attempt to fill the path controller's transmit buffer.
+      max_bytes = num_bytes_left_on_pc;
+    }
+
+    LogD(kClassName, __func__, "Allow %" PRId32 "B max to be dequeued at "
+         "once.\n", max_bytes);
+
+    // Figure out if a bin already has a normal latency solution.  If so, then
+    // we should not look at Zombie packets for this bin.  If this solution has
+    // been investigated and then replaced, we still would have no reason to
+    // look at the Zombie packet.
+    // TODO: Should this be here, or can we include both normal and zombie
+    // candidates if they fit?
+    LatencyClass  ttype;
+    for (uint8_t ttype_i = 0; ttype_i < num_standard_dequeue_ttypes_;
+         ++ttype_i)
+    {
+      if ((!bin_map_.IsMcastBinIndex(gradient.bin_idx)) ||
+          (gradient.is_zombie == false))
+      {
+        ttype = standard_dequeue_ttypes_[ttype_i];
+      }
+      else
+      {
+        ttype = standard_dequeue_ttypes_zombies_first_[ttype_i];
+      }
+
+      // For zombie ttypes, only return enough bytes to make up the difference
+      // between what we've found so far and what we need. Otherwise, it's ok
+      // to get max_bytes of real packets for each gradient and sort it out
+      // later.
+      uint32_t to_find = static_cast<uint32_t>(max_bytes);
+      if (Packet::IsZombie(ttype))
+      {
+        if (to_find > cand_bytes_found)
+        {
+          to_find -= cand_bytes_found;
+        }
+        else
+        {
+          break;
+        }
+      }
+      if (!bin_map_.IsMcastBinIndex(gradient.bin_idx))
+      {
+        cand_bytes_found += FindUcastPacketsForGradient(
+          gradient, ttype, now, false, candidates, to_find);
+      }
+      else
+      {
+        cand_bytes_found += FindMcastPacketsForGradient(
+          gradient, ttype, false, candidates, to_find);
+      }
+    }
+
+    if (cand_bytes_found > 0)
+    {
+      // For now, don't combine multiple gradients (i.e., multiple
+      // destinations or path controllers) in the same set of results.
+      // TODO: consider removing this condition later, but we'll need some
+      // extra conditions to evaluate max_bytes with consideration for how
+      // many packets we already picked for a particular path controller.
+      break;
+    }
+
+    // Otherwise, look at the case when the next gradient is equal.
+  } // END treating normal and Zombie packets.
+  // *** END Regular Solution ***
+
+  // We have explored all packets that could match this gradient.
+  if (candidates.size() > 0)
+  {
+    TransmitCandidate                               selected_candidate;
+    OrderedList<TransmitCandidate, Time>::WalkState cand_ws;
+    cand_ws.PrepareForWalk();
+
+    while (candidates.GetNextItem(cand_ws, selected_candidate))
+    {
+      // We have at least one packet and the next gradient is strictly smaller.
+      LogD(kClassName, __func__, "Selected candidate %s.\n",
+           selected_candidate.ToString().c_str());
+
+      if (!selected_candidate.is_valid)
+      {
+        LogE(kClassName, __func__, "Invalid candidate in candidates list.\n");
+        continue;
+      }
+      if (selected_candidate.pkt)
+      {
+        if (enable_mcast_opportunistic_fwding_ &&
+	    bin_map_.IsMcastBinIndex(gradient.bin_idx) &&
+	    selected_candidate.pkt)
+        {
+          McastOpportunisticForwarding(selected_candidate);
+        }
+        solutions[num_solutions].pkt  =
+          (selected_candidate.q_mgr)->DequeueAtIterator(
+            selected_candidate.pkt->GetLatencyClass(),
+            selected_candidate.dequeue_loc, selected_candidate.dst_vec);
+        if (!solutions[num_solutions].pkt)
+        {
+          LogF(kClassName, __func__, "DequeueAtIterator returned null.\n");
+          return;
+        }
+        if (bin_map_.IsMcastBinIndex(selected_candidate.bin_idx))
+        {
+          if (solutions[num_solutions].pkt != selected_candidate.pkt)
+          {
+            // If the packet is multicast and the dequeue gave us a different
+            // packet than the selected candidate, it means that it was cloned.
+            // Switch to the clone so that we point to proper destination bit
+            // vector.
+            selected_candidate.pkt  = solutions[num_solutions].pkt;
+          }
+
+          LogD(kClassName, __func__, "Dequeued mcast packet %s for bin %s: "
+               "%s\n",
+               solutions[num_solutions].pkt->GetPacketMetadataString().c_str(),
+               selected_candidate.id_to_log.c_str(),
+               selected_candidate.ToString().c_str());
+        }
+        if (solutions[num_solutions].pkt->HasQueuingDelay())
+        {
+          // HasQueuingDelay is always false because this is normal
+          // (non-packetless) traffic.
+          AddDelayToAverage(Time::GetNowInUsec() -
+            solutions[num_solutions].pkt->recv_time().GetTimeInUsec(),
+            selected_candidate.bin_idx);
+        }
+      }
+      else
+      {
+        // This is a packetless Zombie.
+        solutions[num_solutions].pkt = (selected_candidate.q_mgr)->Dequeue(
+            selected_candidate.latency_class,
+            selected_candidate.virtual_len,
+            selected_candidate.dst_vec);
+
+        if (!solutions[num_solutions].pkt)
+        {
+          if (selected_candidate.dst_vec == 0)
+          {
+            LogE(kClassName, __func__, "Failed to dequeue %s packet of size "
+                 "%zdB from queue of %zdB.\n",
+                 LatencyClass_Name[selected_candidate.latency_class].c_str(),
+                 selected_candidate.virtual_len,
+                 (selected_candidate.q_mgr)->GetNextDequeueSize(
+                   selected_candidate.latency_class));
+          }
+          else
+          {
+            LogE(kClassName, __func__, "Failed to dequeue %s packet of size "
+                 "%zdB from multicast zombie queue.\n",
+                 LatencyClass_Name[selected_candidate.latency_class].c_str(),
+                 selected_candidate.virtual_len);
+          }
+        }
+      }
+      if (solutions[num_solutions].pkt == NULL)
+      {
+        LogF(kClassName, __func__, "Error dequeuing a packet.\n");
+        continue;
+      }
+
+      solutions[num_solutions].bin_idx          = selected_candidate.bin_idx;
+      solutions[num_solutions].path_ctrl_index  =
+        selected_candidate.path_ctrl_index;
+
+      path_ctrl_q_sizes[selected_candidate.path_ctrl_index] +=
+        selected_candidate.virtual_len;
+      max_bytes -= selected_candidate.virtual_len;
+
+      ++num_solutions;
+
+      if (!multi_deq_ ||
+        (path_ctrl_q_sizes[solutions[num_solutions - 1].path_ctrl_index] >
+          static_cast<int32_t>(xmit_buf_max_thresh_)) ||
+        (max_bytes <= 0) ||
+        (num_solutions >= max_num_solutions))
+      {
+        LogD(kClassName, __func__, "End packet selections:%s%s%s%s.\n",
+             multi_deq_ ? "" : " no multi-dequeue",
+             path_ctrl_q_sizes[solutions[num_solutions - 1].path_ctrl_index] >
+              static_cast<int32_t>(xmit_buf_max_thresh_) ? "; path ctrl full"
+              : "",
+             max_bytes <= 0 ? "; num bytes reached" : "",
+             num_solutions >= max_num_solutions ?
+              "; max num solutions reached" : "");
+        break;
+      }
+    }
+  }
+}
+
+//============================================================================
+bool BPDequeueAlg::IsHistoryConstrained(Packet* pkt, iron::Time& ttg,
+                                        uint32_t* latencies_us,
+                                        size_t num_latencies)
 {
   if (anti_circ_ != AC_TECH_HEURISTIC_DAG)
   {
@@ -1897,8 +1956,8 @@ bool UberFwdAlg::IsHistoryConstrained(Packet* pkt, iron::Time& ttg,
 }
 
 //============================================================================
-bool UberFwdAlg::GetMinLatencyPath(uint32_t* latencies_us, size_t num_latencies,
-                                   size_t& path_ctrl_index, Time& min_ttr)
+bool BPDequeueAlg::GetMinLatencyPath(uint32_t* latencies_us, size_t num_latencies,
+                                     size_t& path_ctrl_index, Time& min_ttr)
 {
   path_ctrl_index = std::numeric_limits<uint8_t>::max();
   min_ttr.SetInfinite();
@@ -1933,11 +1992,10 @@ bool UberFwdAlg::GetMinLatencyPath(uint32_t* latencies_us, size_t num_latencies,
 }
 
 //============================================================================
-uint32_t UberFwdAlg::FindUcastPacketsForGradient(const Gradient& gradient,
-                         LatencyClass& ttype,
-                         Time& now, bool consider_latency,
-                         OrderedList<TransmitCandidate, Time>& candidates,
-                         uint32_t max_bytes)
+uint32_t BPDequeueAlg::FindUcastPacketsForGradient(
+  const Gradient& gradient, LatencyClass& ttype, const Time& now,
+  bool consider_latency, OrderedList<TransmitCandidate, Time>& candidates,
+  uint32_t max_bytes)
 {
   BinIndex        dst_bin_idx = gradient.bin_idx;
   bool            is_dst      = gradient.is_dst;
@@ -2237,6 +2295,7 @@ uint32_t UberFwdAlg::FindUcastPacketsForGradient(const Gradient& gradient,
       // standard packet.
       uint32_t  bytes_allowed  = ((multi_deq_ && (max_bytes > 1)) ? max_bytes :
         kZombieSingleDequeueLenBytes);
+
       LogD(kClassName, __func__,
            "Have %" PRIu32 "B of Zombie available (%" PRIu32 "B dequeuable), "
            "algorithm allows %" PRId32 "B for bin %s.\n",
@@ -2285,9 +2344,10 @@ uint32_t UberFwdAlg::FindUcastPacketsForGradient(const Gradient& gradient,
 }
 
 //============================================================================
-uint32_t UberFwdAlg::FindMcastPacketsForGradient(
+uint32_t BPDequeueAlg::FindMcastPacketsForGradient(
   const Gradient& gradient,
   LatencyClass& ttype,
+  bool consider_latency,
   OrderedList<TransmitCandidate, Time>& candidates,
   uint32_t max_bytes)
 {
@@ -2313,8 +2373,8 @@ uint32_t UberFwdAlg::FindMcastPacketsForGradient(
 
   BinQueueMgr*    q_mgr           = queue_store_->GetBinQueueMgr(grad.bin_idx);
   PathController* path_ctrl       = path_ctrls_[grad.path_ctrl_index].path_ctrl;
-  QueueDepths*    nbr_queue_depth = queue_store_->GetBinQueueMgr(
-    grad.bin_idx)->GetNbrQueueDepths(path_ctrl->remote_bin_idx());
+  QueueDepths*    nbr_queue_depth =
+    q_mgr->GetNbrQueueDepths(path_ctrl->remote_bin_idx());
 
   if (!nbr_queue_depth)
   {
@@ -2492,8 +2552,11 @@ uint32_t UberFwdAlg::FindMcastPacketsForGradient(
   Packet*                           pkt = NULL;
   uint64_t                          num_exact_match_bytes = 0;
 
+  uint32_t  num_pkts_checked = 0;
   while ((pkt = q_mgr->PeekNext(ttype, saved_it)))
   {
+    ++num_pkts_checked;
+
     DstVec  pkt_dst_vec = pkt->dst_vec();
     LogD(kClassName, __func__,
          "Pkt %p has dst vec 0x%X to be compared to gradient dst vec 0x%X.\n",
@@ -2502,7 +2565,8 @@ uint32_t UberFwdAlg::FindMcastPacketsForGradient(
     BinIndex  idx                 = 0;
     DstVec    proposed_dst_vec    = 0;
 
-    if ((anti_circ_ != AC_TECH_NONE) &&
+    if (consider_latency &&
+        (anti_circ_ != AC_TECH_NONE) &&
         (packet_history_mgr_->PacketVisitedBin(
           pkt, bin_map_.GetPhyBinId(path_ctrl->remote_bin_idx()))))
     {
@@ -2569,6 +2633,15 @@ uint32_t UberFwdAlg::FindMcastPacketsForGradient(
         break;
       }
     }
+
+    if ((all_ordered_cands.size() > 0) &&
+        (num_pkts_checked > mcast_queue_search_depth_pkts_))
+    {
+      LogD(kClassName, __func__, "Exiting having found a candidate and "
+           "having checked at least %" PRIu32 " entries.\n",
+           mcast_queue_search_depth_pkts_);
+      break;
+    }
   } // end of skimming entire queue.
 
   OrderedList<TransmitCandidate, uint64_t>::WalkState ordered_ws;
@@ -2596,7 +2669,7 @@ uint32_t UberFwdAlg::FindMcastPacketsForGradient(
 }
 
 //============================================================================
-void UberFwdAlg::McastOpportunisticForwarding(TransmitCandidate& candidate)
+void BPDequeueAlg::McastOpportunisticForwarding(TransmitCandidate& candidate)
 {
   DstVec    pkt_dst_vec   = candidate.pkt->dst_vec();
   DstVec    new_dst_vec   = candidate.dst_vec;
@@ -2621,8 +2694,8 @@ void UberFwdAlg::McastOpportunisticForwarding(TransmitCandidate& candidate)
        valid = bin_map_.GetNextUcastBinIndex(dst_idx))
   {
     // The only destinations we want to consider adding are those that are in
-    // the packet's destinatin vector but not yet in the proposed (candidate)
-    // desination vector.
+    // the packet's destination vector but not yet in the proposed (candidate)
+    // destination vector.
     if (bin_map_.IsBinInDstVec(pkt_dst_vec, dst_idx) &&
         !bin_map_.IsBinInDstVec(candidate.dst_vec, dst_idx))
     {
@@ -2664,23 +2737,6 @@ void UberFwdAlg::McastOpportunisticForwarding(TransmitCandidate& candidate)
         add_dst  = false;
       }
 
-      uint32_t  latency_us[kMaxPathCtrls];
-      memset(latency_us, 0, sizeof(latency_us));
-      // Get the latency to the destination bin to find infinite paths.
-      bpfwder_.GetPerPcLatencyToDst(dst_idx, (uint32_t*) latency_us, false);
-
-      if (exclude_infinite_paths_ &&
-        (latency_us[path_ctrl->path_controller_number()] == UINT32_MAX))
-      {
-        LogD(kClassName, __func__,
-             "Excluding destination %s through considered nbr %" PRIBinId
-             " because it is an infinite path.\n",
-             bin_map_.GetIdToLog(dst_idx).c_str(),
-             path_ctrl->remote_bin_id());
-        add_dst  = false;  // Ineffectual, but just in case.
-        continue;
-      }
-
       // Now see if there's another path controller with a higher
       // differential.
       for (size_t pc_index = 0; pc_index < num_path_ctrls_; ++pc_index)
@@ -2691,19 +2747,6 @@ void UberFwdAlg::McastOpportunisticForwarding(TransmitCandidate& candidate)
         }
 
         path_ctrl = path_ctrls_[pc_index].path_ctrl;
-
-        if (latency_us[path_ctrl->path_controller_number()] == UINT32_MAX)
-        {
-          if (exclude_infinite_paths_)
-          {
-            LogD(kClassName, __func__,
-                 "Excluding destination %s through nbr %" PRIBinId
-                 " because it is an infinite path.\n",
-                 bin_map_.GetIdToLog(dst_idx).c_str(),
-                 path_ctrl->remote_bin_id());
-            continue;
-          }
-        }
 
         if (!add_dst)
         {
@@ -2760,7 +2803,7 @@ void UberFwdAlg::McastOpportunisticForwarding(TransmitCandidate& candidate)
 }
 
 //============================================================================
-void UberFwdAlg::AddDelayToAverage(int64_t queue_delay_us, BinIndex bin_idx)
+void BPDequeueAlg::AddDelayToAverage(int64_t queue_delay_us, BinIndex bin_idx)
 {
   double  alpha = kDefaultQueueDelayAlpha;
 

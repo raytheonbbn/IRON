@@ -102,7 +102,7 @@ namespace
   const int32_t   kDefaultLanIfMssFf = 0;
 
   /// Default LAN interface sack.
-  const int       kDefaultLanIfSack = 1;
+  const int       kDefaultLanIfSack = 0;
 
   /// Default WAN interface congestion control: 0=Pure Rate Control, 1=VJ
   /// Congestion Control

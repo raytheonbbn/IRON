@@ -16,7 +16,7 @@ Topology:
 The IRON nodes run bpf / udp proxy / tcp proxy / amp.
 
 Initially, all links have capacity 10Mbps. The link between e1 and e2 has a
-60ms delay, and the other links have 5 ms delay. 30 seconds into the
+65ms delay, and the other links have 5 ms delay. 30 seconds into the
 experiment, the link between e1 and e3 is reduced to 6Mbps. The link is restored
 to 10Mbps after 20 seconds.
 
@@ -24,8 +24,8 @@ Traffic:
 
 There are three MGEN flows from enclave1 to enclave2. 
 - A tcp flow with p=1  with LOG utility.
-- A udp flow with p=10 with STRAP utility, nominal rate = 3.5Mbps, deadline = 50ms
-- A udp flow with p=20 with STRAP utility, nominal rate = 3.5Mbps, deadline = 50ms 
+- A udp flow with p=10 with STRAP utility, nominal rate = 3.5Mbps, deadline = 60ms
+- A udp flow with p=20 with STRAP utility, nominal rate = 3.5Mbps, deadline = 60ms 
 
 
 Source en1.ap1 sends two UDP flows, sourced at a rate of 3.5Mbps, with STRAP

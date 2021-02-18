@@ -412,7 +412,7 @@ namespace iron
     /// \brief Queue depths object to be shared with the proxies via shared
     /// memory.
     ///
-    /// This will be a concatonation of one depth from each bin's BinQueueMgr.
+    /// This will be a concatenation of one depth from each bin's BinQueueMgr.
     QueueDepths                             proxy_depths_;
 
     /// True if we are running ASAP.

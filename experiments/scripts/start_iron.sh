@@ -310,6 +310,14 @@ if [ -e "${BIN_DIR}/${BIN}" ]; then
     fi
 fi
 
+# Start mgms. It is best to start this AFTER amp has started.
+BIN=mgms
+if [ -e "${BIN_DIR}/${BIN}" ]; then
+    echo "${BIN_DIR}/${BIN} -I ${PROXY_INBOUND_IF} -l ${LOG_DIR}/${BIN}.log"
+    screen -d -m ${BIN_DIR}/${BIN} -I ${PROXY_INBOUND_IF} \
+	   -l ${LOG_DIR}/${BIN}.log
+fi
+
 # Starting the monitoring processes now. If started right after the processes
 # sometimes pidof ${BIN} fails to find the process ID...
 if ${MONITOR_PERF}; then

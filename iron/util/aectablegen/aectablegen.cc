@@ -47,11 +47,11 @@
 #define MAXSRCPKTS 10  
 #define NTGTPRECV  14
 #define NROUNDS     7
-#define NPERS       9
+#define NPERS      10
 
 double
-pervals[NPERS]     = {0.1, 0.15, 0.2, 0.25, 0.3,
-		      0.35, 0.4, 0.45, 0.5};
+pervals[NPERS]     = {0.05, 0.1,  0.15, 0.2,  0.25,
+		      0.3,  0.35, 0.4,  0.45, 0.5};
 
 double
 epsilon[NTGTPRECV] = {0.001, 0.002, 0.003, 0.004,

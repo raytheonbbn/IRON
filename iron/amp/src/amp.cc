@@ -456,7 +456,7 @@ void Amp::Start()
         // Process a received remote control message.
         ProcessClientRemoteControlMessage();
       }
-      
+
       if (rc_server_.ServiceFileDescriptors(read_fds))
       {
         // Process a received remote control message.
@@ -505,7 +505,7 @@ void Amp::Start()
     {
       continue;
     }
-    
+
     // Send any AMP command from the command file
     while((now > start_time + Time(cmds_[curr_cmd].time_)))
     {
@@ -1245,7 +1245,7 @@ bool Amp::ProcessPushMessage()
   else if (client_id == connection_map_["bpf"])
   {
   // Original format supporting only unicast
-    
+
   // BPF stats "keyvals" format.  Note that "b" is "Uint" and "n" is "Uint".
   //  "stats" :
   //  {
@@ -1282,7 +1282,7 @@ bool Amp::ProcessPushMessage()
   //  }
 
   // New format supporting multicast
-    
+
   // Stats "keyvals" format.  Note that "b" is "Uint" and "n" is "Uint".
   //  "stats" :
   //  {
@@ -1359,7 +1359,7 @@ bool Amp::ProcessPushMessage()
 
     // TODO: Near term this code has been modified to pull just the unicast information
     // out o fthe new format, so that
-    
+
     target = "bpf";
     Value::ConstMemberIterator stats_itr
         = stats.FindMember("PcProperties");
@@ -1388,7 +1388,7 @@ bool Amp::ProcessPushMessage()
       for (size_t i = 0; i + 1 < grp_bin_depths.Size(); i = i + 2)
       {
 	McastId bin = grp_bin_depths[i].GetUint();
-	
+
 	avg_queue_depths_[bin] = grp_bin_depths[i+1].GetUint();
 	LogD(kClassName, __func__, "Bin: %" PRIMcastId ", depth: %" PRIu32
 	     "Bytes\n", bin, avg_queue_depths_[bin]);
@@ -1466,7 +1466,7 @@ bool Amp::ProcessPushMessage()
           uint32_t latency = lat_itr->value.GetUint();
           supervisory_ctl_->UpdateLinkChar(nbr_ip_str, dest_bin, latency,
             capacity);
-          LogA(kClassName, __func__, "Bin: %" PRIBinId ", latency: %" PRIu32 
+          LogA(kClassName, __func__, "Bin: %" PRIBinId ", latency: %" PRIu32
             ", capacity: %" PRIu32 ".\n", dest_bin, latency, capacity);
         }
       }
@@ -1928,22 +1928,22 @@ void Amp::ProcessSetMessage()
       return;
     }
 
-    itr          = key_vals->FindMember("addr");
-    string addr  = itr->value.GetString();
+    itr                    = key_vals->FindMember("mcast_addr");
+    string  mcast_addr_str = itr->value.GetString();
     if (itr == key_vals->MemberEnd())
     {
-      LogE(kClassName, __func__, "GMM does not have an addr key.\n");
+      LogE(kClassName, __func__, "GMM does not have a mcast_addr key.\n");
       return;
     }
 
     LogD(kClassName, __func__, "Recieved group management message. %s group "
-         "%s.\n", action.c_str(), addr.c_str());
+         "%s.\n", action.c_str(), mcast_addr_str.c_str());
 
     // Relay to the BPF.
     if(connection_map_.find("bpf") != connection_map_.end())
     {
-      SendSetMsgToClient("bpf", "update_group", addr + ";" + action + ";" +
-                         saddr.ToString());
+      SendSetMsgToClient("bpf", "update_group", mcast_addr_str + ";" +
+                         action);
     }
     else
     {

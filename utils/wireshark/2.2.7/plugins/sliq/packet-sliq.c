@@ -83,6 +83,7 @@ void proto_register_sliq(void);
 #define ACK_HDR           33
 #define CC_SYNC_HDR       34
 #define RCVD_PKT_CNT_HDR  35
+#define CONN_MEAS_HDR     36
 
 #define CC_PKT_TRAIN_HDR  40
 
@@ -96,6 +97,7 @@ static const value_string  headertypenames[] = {
   {ACK_HDR,          "ACK"},
   {CC_SYNC_HDR,      "CC Synchronization"},
   {RCVD_PKT_CNT_HDR, "Received Packet Count"},
+  {CONN_MEAS_HDR,    "Connection Measurement"},
   {CC_PKT_TRAIN_HDR, "CC Packet Train"},
   {41, NULL}
 };
@@ -159,10 +161,10 @@ static const value_string  cctypenames[] = {
   {1,  "Google TCP Cubic Bytes"},
   {2,  "Google TCP Reno Bytes"},
   {3,  "TCP Cubic"},
-  {4,  "Copa Constant Delta"},
-  {5,  "CopaM"},
-  {6,  "Copa2"},
-  {7,  "Copa3"},
+  {4,  "Copa Beta 1 Constant Delta"},
+  {5,  "Copa Beta 1 M"},
+  {6,  "Copa Beta 2"},
+  {7,  "Copa"},
   {8,  "Undefined 8"},
   {9,  "Undefined 9"},
   {10, "Undefined 10"},
@@ -490,6 +492,28 @@ static int  hf_sliq_sy_cc_params = -1;
 static int  hf_sliq_rc_rtx         = -1;
 static int  hf_sliq_rc_pkt_seq     = -1;
 static int  hf_sliq_rc_rcv_pkt_cnt = -1;
+
+
+/* Connection Measurement */
+/*  0                   1                   2                   3    */
+/*  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1  */
+/* +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ */
+/* |     Type      |O|   Unused    |        Sequence Number        | */
+/* +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ */
+/* |            Maximum Remote-To-Local One-Way Delay*             | */
+/* +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ */
+
+/* Flags:  O = Maximum Remote-To-Local One-Way Delay Present */
+
+#define CM_BASE_HDR_LEN  4
+#define CM_OWD_HDR_LEN   4
+
+static int  hf_sliq_cm_flags       = -1;
+static int  hf_sliq_cm_flags_owd   = -1;
+static int  hf_sliq_cm_seq_num     = -1;
+static int  hf_sliq_cm_max_rtl_owd = -1;
+
+#define CM_OWD_FLAG  0x80
 
 
 /* Congestion Control Packet Train */
@@ -1130,6 +1154,46 @@ static int dissect_sliq(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
         }
         break;
 
+      case CONN_MEAS_HDR: /*  Connection Measurement */
+        if (tvb_reported_length_remaining(tvb, offset) >= CM_BASE_HDR_LEN)
+        {
+          guint8  owd_field = 0;
+
+          proto_tree_add_item(sliq_tree, hf_sliq_type,
+                              tvb, offset, 1, ENC_BIG_ENDIAN);
+          offset += 1;
+
+          owd_field = (tvb_get_guint8(tvb, offset) & CM_OWD_FLAG);
+          proto_tree_add_item(sliq_tree, hf_sliq_cm_flags,
+                              tvb, offset, 1, ENC_BIG_ENDIAN);
+          proto_tree_add_item(sliq_tree, hf_sliq_cm_flags_owd,
+                              tvb, offset, 1, ENC_BIG_ENDIAN);
+          offset += 1;
+
+          proto_tree_add_item(sliq_tree, hf_sliq_cm_seq_num,
+                              tvb, offset, 2, ENC_BIG_ENDIAN);
+          offset += 2;
+
+          if (owd_field)
+          {
+            if (tvb_reported_length_remaining(tvb, offset) >= CM_OWD_HDR_LEN)
+            {
+              proto_tree_add_item(sliq_tree, hf_sliq_cm_max_rtl_owd,
+                                  tvb, offset, 4, ENC_BIG_ENDIAN);
+              offset += 4;
+            }
+            else
+            {
+              done = TRUE;
+            }
+          }
+        }
+        else
+        {
+          done = TRUE;
+        }
+        break;
+
       case CC_PKT_TRAIN_HDR: /* Congestion Control Packet Train */
         if (tvb_reported_length_remaining(tvb, offset) >= PT_HDR_LEN)
         {
@@ -1580,6 +1644,31 @@ void proto_register_sliq(void)
     },
     { &hf_sliq_rc_rcv_pkt_cnt,
       { "Connection Received Data Packet Count", "sliq.rc_rcv_pkt_cnt",
+        FT_UINT32, BASE_DEC,
+        NULL, 0x0,
+        NULL, HFILL }
+    },
+    /* Connection Measurement */
+    { &hf_sliq_cm_flags,
+      { "Flags", "sliq.cm_flags",
+        FT_UINT8, BASE_DEC,
+        NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_sliq_cm_flags_owd,
+      { "One-Way Delay Present", "sliq.cm_flags_owd",
+        FT_BOOLEAN, 8,
+        NULL, CM_OWD_FLAG,
+        NULL, HFILL }
+    },
+    { &hf_sliq_cm_seq_num,
+      { "Sequence Number", "sliq.cm_seq_num",
+        FT_UINT16, BASE_DEC,
+        NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_sliq_cm_max_rtl_owd,
+      { "Maximum Remote-To-Local One-Way Delay", "sliq.cm_owd",
         FT_UINT32, BASE_DEC,
         NULL, 0x0,
         NULL, HFILL }

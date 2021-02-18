@@ -49,6 +49,7 @@
 SRC_DIRS = amprelay/src \
            gulp/src \
            linkem/src \
+           mgms/src \
            nftp/src \
            sliqdecap/src \
            sonddecap/src \

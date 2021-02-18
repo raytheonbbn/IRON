@@ -120,8 +120,8 @@ namespace
   const bool      kDefaultLogStats              = true;
 
   /// The maximum number of packets to be dequeued at once after calling
-  /// FindNextTransmission.
-  const uint8_t   kMaxNumSolutions              = 127;
+  /// FindNextTransmission().
+  const uint8_t   kDefaultMaxNumSolutions       = 1;  // Was 127
 
   /// The number of buckets in the latency cache's hash table.  A key is the
   /// combination of an 8bit destination and a 14bit history vector bit map, or
@@ -200,6 +200,8 @@ namespace
 
   /// Default virtual queue multiplier.
   const uint32_t  kDefaultVirtQueueMult         = 1100;
+
+  
 }
 
 //============================================================================
@@ -233,7 +235,7 @@ BPFwder::BPFwder(PacketPool& packet_pool,
                            PACKET_OWNER_TCP_PROXY,
                            kMaxPktsPerFifoRecv),
       queue_store_(NULL),
-      bpf_fwd_alg_(NULL),
+      bpf_dequeue_alg_(NULL),
       last_qlam_size_bits_(256),
       min_path_ctrl_cap_est_bps_(kMinCapacityBitsPerSec),
       packet_history_mgr_(NULL),
@@ -288,9 +290,9 @@ BPFwder::BPFwder(PacketPool& packet_pool,
       num_stale_qlams_rcvd_(0),
       mcast_fwding_(kDefaultMcastFwding),
       mcast_agg_(true),
-      mcast_group_cache_(),
       mcast_group_memberships_(),
       config_info_(config_info),
+      max_num_dequeue_alg_solutions_(kDefaultMaxNumSolutions),
       send_grams_(kDefaultSendGrams)
 {
   LogI(kClassName, __func__, "Creating Backpressure Forwarder...\n");
@@ -340,7 +342,7 @@ BPFwder::~BPFwder()
   delete queue_store_;
 
   // Destroy the BPFwder algorithm.
-  delete bpf_fwd_alg_;
+  delete bpf_dequeue_alg_;
 
   // Destroy the Path Controllers and their QLAM generation timers.
   for (size_t i = 0; i < kMaxPathCtrls; ++i)
@@ -365,20 +367,6 @@ BPFwder::~BPFwder()
     dummy_lat = NULL;
   }
   latency_cache_.Clear();
-
-  // Clean up the group membership table.
-  iron::MashTable<Ipv4Address, List<string>*>::WalkState mg_ws;
-  List<string>* host_list = NULL;
-
-  while (mcast_group_cache_.GetNextItem(mg_ws, host_list))
-  {
-    if (host_list)
-    {
-      host_list->Clear();
-      delete host_list;
-    }
-  }
-  mcast_group_cache_.Clear();
 
   // Clean up the node records.  Loop over all possible BinIndex values to
   // make sure everything gets cleaned up.
@@ -455,6 +443,10 @@ bool BPFwder::Initialize()
     return false;
   }
 
+  // Get the virtual queue hop-count multiplier.
+  virt_queue_mult_ = config_info_.GetUint("Bpf.VirtQueueDepths.Multiplier",
+					  kDefaultVirtQueueMult);
+  
   // Initialize the path information.
   if (!path_info_.Initialize(bin_map_shm_))
   {
@@ -810,15 +802,6 @@ bool BPFwder::Initialize()
     return false;
   }
 
-  // Initialize the multicast group membership mash table.
-  if (!mcast_group_cache_.Initialize(kMcastGroupsNumBuckets))
-  {
-    LogF(kClassName, __func__,
-         "Initialize multicast groups to %" PRIu16 " buckets failed.\n",
-         kMcastGroupsNumBuckets);
-    return false;
-  }
-
   // Extract Backpressure Forwarder algorithm info.
   string  bpf_alg       = config_info_.Get("Bpf.Alg.Fwder", kDefaultBpfwderAlg);
 
@@ -834,11 +817,11 @@ bool BPFwder::Initialize()
     return false;
   }
 
-  bpf_fwd_alg_  = new (std::nothrow) iron::UberFwdAlg(
+  bpf_dequeue_alg_  = new (std::nothrow) iron::BPDequeueAlg(
     *this, packet_pool_, bin_map_shm_, queue_store_, packet_history_mgr_,
     num_path_ctrls_, path_ctrls_);
 
-  if (!bpf_fwd_alg_)
+  if (!bpf_dequeue_alg_)
   {
     LogW(kClassName, __func__, "Unable to create new Backpressure Forwarder "
          "algorithm.\n");
@@ -847,10 +830,7 @@ bool BPFwder::Initialize()
 
   // Break up the object creation and initialization to keep method signatures
   // reasonably small.
-  bpf_fwd_alg_->Initialize(config_info_);
-
-  // Preseed the virtual queues (will be left to 0 if the multiplier is set to 0.
-  PreseedVirtQueues(config_info_);
+  bpf_dequeue_alg_->Initialize(config_info_);
 
   // If the local node is not an interior node, then initialize the
   // inter-process communications with the UDP and TCP Proxies.
@@ -890,6 +870,19 @@ bool BPFwder::Initialize()
     bpf_stats_.StartDump();
   }
 
+  // Get the maximum number of solutions that may be returned during each
+  // execution of the dequeue algorithm.
+  max_num_dequeue_alg_solutions_ =
+    config_info_.GetUint("Bpf.Alg.MaxNumDequeueSolutions",
+                         kDefaultMaxNumSolutions) & 0xFF;
+  if (max_num_dequeue_alg_solutions_ == 0)
+  {
+    LogW(kClassName, __func__, "Invalid value provided for "
+         "Bpf.Alg.MaxNumDequeueSolutions (%" PRIu8 "), setting to %" PRIu8
+         ".\n", max_num_dequeue_alg_solutions_, kDefaultMaxNumSolutions);
+    max_num_dequeue_alg_solutions_ = kDefaultMaxNumSolutions;
+  }
+
   // Log the configuration information.
   LogC(kClassName, __func__, "Backpressure Forwarder configuration:\n");
   LogC(kClassName, __func__, "Packet tracing                : %s\n",
@@ -904,6 +897,8 @@ bool BPFwder::Initialize()
     lsa_interval_ms_);
   LogC(kClassName, __func__, "LSA hold down time in ms      : %" PRIu32 "\n",
     lsa_hold_down_time_.GetTimeInMsec());
+  LogC(kClassName, __func__, "Bpf.VirtQueueDepths.Multiplier: %" PRIu32 "\n",
+    virt_queue_mult_);
   LogC(kClassName, __func__, "Bpf.BinId                     : %" PRIBinId "\n",
        my_bin_id_);
   LogC(kClassName, __func__, "Bpf.RemoteControl.Port        : %" PRIu16 "\n",
@@ -930,6 +925,8 @@ bool BPFwder::Initialize()
        drop_expired_rcvd_packets_ ? "true" : "false");
   LogC(kClassName, __func__, "Bpf.SendGrams                 : %s\n",
        send_grams_ ? "true" : "false");
+  LogC(kClassName, __func__, "Bpf.Alg.MaxNumDequeueSolutions: %" PRIu8 "\n",
+       max_num_dequeue_alg_solutions_);
   LogC(kClassName, __func__, "Backpressure Forwarder configuration "
        "complete.\n");
 
@@ -939,7 +936,7 @@ bool BPFwder::Initialize()
 //============================================================================
 void BPFwder::ResetFwdingAlg()
 {
-  bpf_fwd_alg_->ResetFwdingAlg(config_info_);
+  bpf_dequeue_alg_->ResetFwdingAlg(config_info_);
 
   conditional_dags_ = (config_info_.Get("Bpf.Alg.AntiCirculation", "NoChange")
     == "ConditionalDAG") ? true : false;
@@ -1159,10 +1156,13 @@ void BPFwder::Start(uint32_t num_pkts_to_process, uint32_t max_iterations)
 
     uint32_t          num_bytes_sent_since_shm_write = 0;
 
-    uint8_t           num_solutions = kMaxNumSolutions;
+    uint8_t           num_solutions = max_num_dequeue_alg_solutions_;
 
     uint32_t          num_bytes_sent= 0;
     uint32_t          max_free_bytes= 0;
+    uint32_t          bytes_avail[kPathCtrlMaxFdCount];
+    
+    memset(bytes_avail,0,sizeof(bytes_avail));
 
     if (multi_deq_)
     {
@@ -1188,7 +1188,9 @@ void BPFwder::Start(uint32_t num_pkts_to_process, uint32_t max_iterations)
 
         if (xmit_buf_max_thresh_ > current_pc_queue_size)
         {
-          max_free_bytes += xmit_buf_max_thresh_ - current_pc_queue_size;
+	  bytes_avail[pc_index]  = xmit_buf_max_thresh_ -
+	                           current_pc_queue_size;
+	  max_free_bytes        += bytes_avail[pc_index];
         }
       }
 
@@ -1204,11 +1206,11 @@ void BPFwder::Start(uint32_t num_pkts_to_process, uint32_t max_iterations)
     // object.
     do
     {
-      iron::TxSolution  solutions[kMaxNumSolutions];
+      iron::TxSolution  solutions[max_num_dequeue_alg_solutions_];
       num_solutions       = 0;
 
-      if ((num_solutions = bpf_fwd_alg_->FindNextTransmission(solutions,
-        kMaxNumSolutions)) > 0)
+      if ((num_solutions = bpf_dequeue_alg_->FindNextTransmission(
+             solutions, max_num_dequeue_alg_solutions_)) > 0)
       {
         for (uint8_t n = 0; n < num_solutions; ++n)
         {
@@ -1242,8 +1244,25 @@ void BPFwder::Start(uint32_t num_pkts_to_process, uint32_t max_iterations)
             ttg = ttg - (Time::Now() - packet->recv_time());
           }
 
-          num_bytes_sent_since_shm_write += packet->GetLengthInBytes();
-          num_bytes_sent                 += packet->GetLengthInBytes();
+          num_bytes_sent_since_shm_write += packet_size_bytes;
+
+	  // num_bytes_sent is used as a mechanism for exiting the
+	  // while loop (see below) by comparing it with max_free_bytes
+	  // Make sure that sending a packet on one path controller
+	  // (which may exceed the bytes available on that path controller)
+	  // doesn't cause a premature exiting of the while loop, preventing
+	  // the servicing of other path controllers
+	  
+	  if (packet_size_bytes <= bytes_avail[path_ctrl_index])
+	  {
+	    num_bytes_sent               += packet_size_bytes;
+	    bytes_avail[path_ctrl_index] -= packet_size_bytes;
+	  }
+	  else
+	  {
+	    num_bytes_sent               += bytes_avail[path_ctrl_index];
+	    bytes_avail[path_ctrl_index]  = 0;
+	  }
 
           // Send the packet id if (a) someone already marked it (for instance,
           // if this packet arrived with metadata), (b) we are configured to do
@@ -1269,7 +1288,8 @@ void BPFwder::Start(uint32_t num_pkts_to_process, uint32_t max_iterations)
               && packet->IsZombie()))
           {
             dropped_zombie = true;
-            LogD(kClassName, __func__, "RECV: Zombie Dequeued. Drop. (%p, %s)\n",
+            LogD(kClassName, __func__,
+		 "SEND: Zombie Dequeued. Drop. (%p, %s)\n",
                  packet, packet->GetPacketMetadataString().c_str());
             TRACK_EXPECTED_DROP(kClassName, packet_pool_);
             packet_pool_.Recycle(packet);
@@ -1277,7 +1297,7 @@ void BPFwder::Start(uint32_t num_pkts_to_process, uint32_t max_iterations)
 	  DstVec  dst_vec = packet->dst_vec();
           if (dropped_zombie || path_ctrl->SendPacket(packet))
           {
-            // Ownership of packet has been transeferred to the path controller.
+            // Ownership of packet has been transferred to the path controller.
             packet = NULL;
 
             if (packet_has_ip_hdr)
@@ -1496,7 +1516,7 @@ void BPFwder::ProcessIpv4Packet(Packet* packet, PathController* path_ctrl)
   packet->GetDstPort(dport);
 
   // Get the Bin Index from the destination address.
-  BinIndex  bin_idx  = bin_map_shm_.GetDstBinIndexFromAddress(dst_addr);
+  BinIndex bin_idx  = bin_map_shm_.GetDstBinIndexFromAddress(dst_addr);
 
   if (bin_idx == kInvalidBinIndex)
   {
@@ -1571,8 +1591,6 @@ void BPFwder::ProcessIpv4Packet(Packet* packet, PathController* path_ctrl)
     DstVec  new_dst_vec = bin_map_shm_.RemoveBinFromDstVec(dst_vec,
                                                            my_bin_idx_);
 
-    Packet* pkt_copy = packet_pool_.Clone(packet, true,
-      iron::PACKET_COPY_TIMESTAMP);
     if (packet->IsGram())
     {
       // It is a GRAM and needs to be processed locally.
@@ -1581,6 +1599,8 @@ void BPFwder::ProcessIpv4Packet(Packet* packet, PathController* path_ctrl)
     else
     {
       // It is for the local application only.
+      Packet* pkt_copy = packet_pool_.Clone(packet, true,
+                                            iron::PACKET_COPY_TIMESTAMP);
       ProcessIpv4PacketForLocalApp(pkt_copy, protocol, bin_idx);
       LogA(kClassName, __func__, "New dst vec is %X.\n", new_dst_vec);
     }
@@ -1842,139 +1862,6 @@ bool BPFwder::InitializeFifos()
 }
 
 //============================================================================
-void BPFwder::PreseedVirtQueues(const ConfigInfo& config_info)
-{
-  // Expect virtual gradients to be entered by building queue depths.
-  // Each node specifies what its virtual queue depths and its neighbors' should
-  // be using a hop count and multiplier.
-  // Bpf.VirtQueueDepths.Multiplier: Specifies multiplier M.
-  // Bpf.VirtQueueDepths.X.Hops: Specifies number of hops H(X) to X.
-  // The virtual queue depths is: M x H(X).
-
-  // Look for the "Bpf.VirtQueueDepths.Multiplier" key.  If it is not
-  // specified in the configuration, then use the default multiplier value
-  // (already set in the class constructor) with LSA packets to dynamically
-  // set the virtual queue depths, and do not look for any initial virtual
-  // queue values in the configuration.
-  string  vqd_mult_str = config_info.Get("Bpf.VirtQueueDepths.Multiplier",
-                                         "");
-
-  if (vqd_mult_str.empty())
-  {
-    return;
-  }
-
-  // Get the virtual queue depths multiplier to use.
-  virt_queue_mult_ = config_info.GetUint("Bpf.VirtQueueDepths.Multiplier",
-                                         kDefaultVirtQueueMult);
-
-  // If the virtual queue depths multiplier is zero, then do not look for any
-  // initial virtual queue values in the configuration, as they will all be
-  // multiplied by zero.
-  if (virt_queue_mult_ == 0)
-  {
-    return;
-  }
-
-  // A non-zero virtual queue multiplier has been specified.  Load in the
-  // initial virtual queue values from the configuration.  Virtual queues can
-  // only be configured for unicast destination and interior nodes
-  // (i.e. neighbors), not for multicast destinations.
-  BinIndex  bin_idx = 0;
-
-  for (bool valid = bin_map_shm_.GetFirstPhyBinIndex(bin_idx);
-       valid;
-       valid = bin_map_shm_.GetNextPhyBinIndex(bin_idx))
-  {
-    BinId  bin_id = bin_map_shm_.GetPhyBinId(bin_idx);
-
-    LogD(kClassName, __func__, "Setting the virtual queues for bin id %"
-         PRIBinId ".\n", bin_id);
-
-    string virt_queues_hops = config_info.Get("Bpf.VirtQueueDepths."
-      + StringUtils::ToString(static_cast<uint32_t>(bin_id))
-      + ".Hops", "");
-
-    if (virt_queues_hops.empty())
-    {
-      LogW(kClassName, __func__, "Virtual queue configuration missing for "
-           "bin %" PRIBinId ".\n", bin_id);
-      return;
-    }
-
-    List<string>  tokens;
-    StringUtils::Tokenize(virt_queues_hops, ",", tokens);
-
-    List<string>::WalkState ws;
-    ws.PrepareForWalk();
-
-    string  token;
-
-    while (tokens.GetNextItem(ws, token))
-    {
-      if (token.find(":") == string::npos)
-      {
-        LogF(kClassName, __func__, "Virtual queue configuration (%s) not "
-             "readable.\n", token.c_str());
-        continue;
-      }
-
-      List<string>  token_values;
-      StringUtils::Tokenize(token, ":", token_values);
-
-      string    nbr_bin_id_str;
-      string    node_virt_queue_depth_hops;
-      token_values.Pop(nbr_bin_id_str);
-      token_values.Peek(node_virt_queue_depth_hops);
-
-      uint32_t  nbr_bin_id            = StringUtils::GetUint(nbr_bin_id_str, 0);
-      uint32_t  node_virt_queue_depth =
-        StringUtils::GetUint(node_virt_queue_depth_hops, 0) * virt_queue_mult_;
-
-      if (nbr_bin_id == my_bin_id_)
-      {
-        queue_store_->GetVirtQueueDepths()->SetBinDepthByIdx(bin_idx,
-            node_virt_queue_depth);
-	LogD(kClassName, __func__, "Setting virtual queue depth of %" PRIu32
-             "B to reach node % " PRIBinId " via relay node % " PRIBinId
-             ".\n", node_virt_queue_depth, bin_id, nbr_bin_id);
-      }
-      else
-      {
-        BinIndex  nbr_bin_idx = bin_map_shm_.GetPhyBinIndex(nbr_bin_id);
-
-        if (nbr_bin_idx == kInvalidBinIndex)
-        {
-          LogE(kClassName, __func__, "Invalid virtual queue depth neighbor "
-               "bin id %" PRIBinId ".\n", nbr_bin_id);
-        }
-
-        if (ApplyVirtQueueSet(bin_idx, nbr_bin_idx, node_virt_queue_depth))
-        {
-          // This should succeed almost solely for unit tests, where we cannot
-          // wait for a QLAM that will never come.
-	  LogD(kClassName, __func__, "Setting virtual queue depth of %" PRIu32
-               "B to reach node %s via relay node %s.\n",
-               node_virt_queue_depth,
-               bin_map_shm_.GetIdToLog(bin_idx).c_str(),
-	       bin_map_shm_.GetIdToLog(nbr_bin_idx).c_str());
-        }
-        else
-        {
-          // The path controller for this IP address was not found, very likely
-          // because it is still early and the neighbors have not sent a first
-          // QLAM (and the IP address associated with the path controller is
-          // 0.0.0.0).  Try again when we receive a QLAM.
-          LogF(kClassName, __func__, "Failed to set virtual queue depth for "
-               "bin id %" PRIBinId ", will try again later (should not "
-               "persist over connected link).\n", bin_id);
-        }
-      }
-    }
-  }
-}
-
-//============================================================================
 void BPFwder::SendGram()
 {
   Packet* gram = packet_pool_.Get(iron::PACKET_NOW_TIMESTAMP);
@@ -2088,6 +1975,9 @@ void BPFwder::SendGram()
          new_dst_vec);
   }
 
+  // If the bin_idx is invalid, let the forwarding method reject and recycle
+  // the packet
+  
   ForwardPacket(gram, bin_idx);
 }
 //============================================================================
@@ -2586,7 +2476,7 @@ Packet* BPFwder::GenerateLsa()
          valid = bin_map_shm_.GetNextDstBinIndex(copy_bin_idx))
     {
       node_record->records_[copy_bin_idx].queue_delay_ =
-        bpf_fwd_alg_->GetAvgQueueDelay(copy_bin_idx);
+        bpf_dequeue_alg_->GetAvgQueueDelay(copy_bin_idx);
     }
 
     // The queuing delays are included, add number of bins then padding.
@@ -2952,10 +2842,33 @@ void BPFwder::ProcessQlam(Packet* packet, PathController* path_ctrl)
 
     if (group_idx == kInvalidBinIndex)
     {
-      LogF(kClassName, __func__, "Group/Bin id %s does not exist, cannot set "
-           "queues.\n", bin_map_shm_.GetIdToLog(group_idx).c_str());
-      packet_pool_.Recycle(packet);
-      return;
+      // The multicast group is not yet in the BinMap. Since we are processing
+      // a QLAM, we know that this is a valid multicast address that we have
+      // not yet been made aware of by a GRAM (GRAM flooding hasn't made it to
+      // the current node yet). It is OK to add the multicast group to the
+      // BinMap here.
+      Ipv4Address  group_addr(group_id);
+      LogI(kClassName, __func__, "Group/Bin id %s does not "
+           "exist, adding to BinMap.\n", group_addr.ToString().c_str());
+
+      if ((group_idx = bin_map_shm_.AddMcastGroup(group_id)) ==
+          kInvalidBinIndex)
+      {
+        // There was an error adding the multicast group to the BinMap. Should
+        // never happen, just check here for safety. If it ever does fail,
+        // recycle the packet and return.
+        LogW(kClassName, __func__, "Error adding Group/Bin id %s to "
+             "BinMap.\n", group_addr.ToString().c_str());
+        packet_pool_.Recycle(packet);
+        return;
+      }
+
+      // Make sure we have a bin queue manager for the newly added multicast
+      // group.
+      if (queue_store_->GetBinQueueMgr(group_idx) == NULL)
+      {
+        queue_store_->AddQueueMgr(config_info_, group_idx, my_bin_idx_);
+      }
     }
 
     // Get the number of multicast Queue Depth Pairs (1 byte).
@@ -3683,7 +3596,7 @@ bool BPFwder::ProcessBpfSetMessage(const Value* key_vals, string& err_msg)
       LogW(kClassName, __func__, "Got message to update multicast group %s\n",
            value.c_str());
 
-      // The value string is of the form: "mcast_addr;action;host_addr"
+      // The value string is of the form: "mcast_addr;action"
       List<string>  tokens;
       StringUtils::Tokenize(value, ";", tokens);
       string mcast_addr;
@@ -3692,9 +3605,6 @@ bool BPFwder::ProcessBpfSetMessage(const Value* key_vals, string& err_msg)
       McastId mcast_id = bin_map_shm_.GetMcastIdFromAddress(mcast_ip_addr);
       string action;
       tokens.Pop(action);
-      string host_addr;
-      tokens.Pop(host_addr);
-      Ipv4Address host_ip_addr = Ipv4Address(host_addr);
 
       if (!mcast_ip_addr.IsMulticast())
       {
@@ -3702,88 +3612,21 @@ bool BPFwder::ProcessBpfSetMessage(const Value* key_vals, string& err_msg)
         return false;
       }
 
-      iron::List<string>* host_list = NULL;
-      bool group_membership = mcast_group_cache_.Find(mcast_ip_addr, host_list);
-      LogW(kClassName, __func__, "Lookup: %s, mg size: %u\n",
-           mcast_ip_addr.ToString().c_str(), mcast_group_cache_.size());
-
       // Handle the case where a host joins a group.
       if (action == "join")
       {
-        // Update the local group membership table.
-        if (group_membership)
+        if (!mcast_group_memberships_.IsMember(mcast_ip_addr))
         {
-          LogD(kClassName, __func__, "Found group membership\n");
-          if (!host_list->IsMember(host_addr))
+          mcast_group_memberships_.Push(mcast_ip_addr);
+          bin_map_shm_.AddDstToMcastGroup(mcast_ip_addr, my_bin_idx_);
+          BinIndex idx = bin_map_shm_.GetMcastBinIndex(mcast_id);
+          if ((idx != kInvalidBinIndex) &&
+              (queue_store_->GetBinQueueMgr(idx) == NULL))
           {
-            host_list->Push(host_addr);
+            queue_store_->AddQueueMgr(config_info_, idx, my_bin_idx_);
+            LogD(kClassName, __func__," Add queue mgr for: %s\n",
+                 mcast_addr.c_str());
           }
-          else
-          {
-            LogD(kClassName, __func__, "Host %s is already in host list.\n",
-                 host_addr.c_str());
-          }
-        }
-        else
-        {
-          LogD(kClassName, __func__, "New group membership\n");
-          host_list = new (std::nothrow) iron::List<string>();
-          if (host_list == NULL)
-          {
-            LogE(kClassName, __func__, "Error allocating new host list for a "
-                 "new group membership.\n");
-          }
-          else
-          {
-            host_list->Push(host_addr);
-            mcast_group_memberships_.Push(mcast_ip_addr);
-            if(!mcast_group_cache_.Insert(mcast_ip_addr, host_list))
-            {
-              LogW(kClassName, __func__, "Insertion in the multicast group "
-                   "membership tables failed\n");
-            }
-            bin_map_shm_.AddDstToMcastGroup(mcast_ip_addr, my_bin_idx_);
-            BinIndex idx = bin_map_shm_.GetMcastBinIndex(mcast_id);
-            if ((idx != kInvalidBinIndex) &&
-                (queue_store_->GetBinQueueMgr(idx) == NULL))
-            {
-              queue_store_->AddQueueMgr(config_info_, idx, my_bin_idx_);
-              LogD(kClassName, __func__," Add queue mgr for: %s\n",
-                   mcast_addr.c_str());
-            }
-            if (send_grams_)
-            {
-              SendGram();
-            }
-            else
-            {
-              LogW(kClassName, __func__,
-                   "New multicast group detected but GRAMs are disabled.\n");
-            }
-          }
-        }
-      }
-      if (action == "leave")
-      {
-        if (!group_membership)
-        {
-          LogW(kClassName, __func__, "Cannot leave unknown group: %s\n",
-                                     mcast_addr.c_str());
-          return false;
-        }
-        if ((host_list->size() > 0) && (host_list->Remove(host_addr)))
-        {
-          LogD(kClassName, __func__, "Removed host %s from group %s.\n",
-               host_addr.c_str(), mcast_addr.c_str());
-        }
-        if (host_list->size() == 0)
-        {
-          LogD(kClassName, __func__, "No remaining hosts on group %s.\n",
-               mcast_addr.c_str());
-          bin_map_shm_.RemoveDstFromMcastGroup(mcast_ip_addr, my_bin_idx_);
-          mcast_group_memberships_.Remove(mcast_ip_addr);
-          mcast_group_cache_.FindAndRemove(mcast_ip_addr, host_list);
-          delete host_list;
           if (send_grams_)
           {
             SendGram();
@@ -3791,8 +3634,22 @@ bool BPFwder::ProcessBpfSetMessage(const Value* key_vals, string& err_msg)
           else
           {
             LogW(kClassName, __func__,
-                 "Multicast group deleted but GRAMs are disabled.\n");
+                 "New multicast group detected but GRAMs are disabled.\n");
           }
+        }
+      }
+      if (action == "leave")
+      {
+        bin_map_shm_.RemoveDstFromMcastGroup(mcast_ip_addr, my_bin_idx_);
+        mcast_group_memberships_.Remove(mcast_ip_addr);
+        if (send_grams_)
+        {
+          SendGram();
+        }
+        else
+        {
+          LogW(kClassName, __func__, "Multicast group deleted but GRAMs are "
+               "disabled.\n");
         }
       }
     }
@@ -5678,7 +5535,7 @@ void BPFwder::ForwardPacket(Packet* packet, BinIndex dst_bin_idx)
 
       GetPerPcLatencyToDst(
         dst_bin_idx, (uint32_t*) latencies_us, true, packet);
-      iron::UberFwdAlg::GetMinLatencyPath(latencies_us, num_path_ctrls_,
+      iron::BPDequeueAlg::GetMinLatencyPath(latencies_us, num_path_ctrls_,
         dummy_path_ctrl_index, min_ttr);
       LogD(kClassName, __func__,
            "Pkt %s (%p) with ttg %s can reach dst in at least %s.\n",

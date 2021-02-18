@@ -274,6 +274,25 @@ static int32_t removeSliqHeader(char *dumpFileIn, char *dumpFileOut)
             {
               sptr += kRcvdPktCntHdrSize;
             }
+            else if (type == CONN_MEAS_HEADER)
+            {
+              // Make sure there is enough data to completely read the front
+              // end info
+              if ((size_t)(send - sptr) > sizeof(struct connMeasFrontend))
+              {
+                struct connMeasFrontend *cmfe =
+                  (struct connMeasFrontend *)sptr;
+                size_t connMeasSize =
+                  (kConnMeasHdrBaseSize +
+                   ((size_t)((cmfe->flags & 0x80) ? 1 : 0) *
+                    kConnMeasHdrMaxRtlOwdSize));
+                sptr += connMeasSize;
+              }
+              else
+              {
+                sptr = send;
+              }
+            }
             else if (type == CC_PKT_TRAIN_HEADER)
             {
               sptr = send;

@@ -10,6 +10,17 @@ aectablegen.cc
 doflutparms.h
 	Captured output from running aectablegen > doflutparms.h
 
+efficiency.cc
+	Computes the efficiency values or the efficiency lookup table
+	data. Modify the PRINT_HEADER_FILE constant to switch between the
+	two output formats. The output is to stdout.
+
+sliqmode.cc
+	Computes the FEC mode and efficiency value that the SLIQ protocol
+	would use for a given PER, TgtPrecv, TgtLat, MaxRTT, MaxOWD (maximum
+	local-to-remote one-way delay), and MaxPST (maximum packet
+	serialization time).
+
 aecsim.cc
 	Simulates sending packets over a channel with a fixed Bernoulli
 	packet loss rate and calculates both the Precv and efficiency

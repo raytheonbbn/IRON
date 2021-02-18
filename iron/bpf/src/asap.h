@@ -49,9 +49,11 @@
 #include "itime.h"
 #include "gradient.h"
 #include "ordered_list.h"
+#include "packet.h"
+
 
 #include <stdint.h>
-
+#include <queue>
 
 namespace iron
 {
@@ -71,10 +73,10 @@ namespace iron
 
     /// \brief Default constructor.
     ///
-    /// \param  packet_pool  Pool containing packet to use.
-    /// \param  bin_map      Mapping of IRON bins.
-    /// \param  q_mgr        The queues ASAP acts on.
-    /// \param  my_bin_index ASAP is managing queues for this bin.
+    /// \param  packet_pool    Pool containing packet to use.
+    /// \param  bin_map        Mapping of IRON bins.
+    /// \param  q_mgr          The queues ASAP acts on.
+    /// \param  my_bin_index   ASAP is managing queues for this bin.
     /// \param  node_bin_index ASAP is running on this node
     ASAP(PacketPool& packet_pool, BinMap& bin_map, BinQueueMgr& q_mgr,
          BinIndex my_bin_index, BinIndex node_bin_index);
@@ -87,13 +89,44 @@ namespace iron
     /// This will add zombies to the queue to account for packet
     /// delay, with the goal of preventing starvation by adding
     /// more and more zombies as the delay grows.
-   void AdjustQueueValuesForAntiStarvation();
+    void AdjustQueueValuesForAntiStarvation();
+
+    /// \brief Returns the oldest enqueue time from the head of bin
+    ///        indexable array, which may have multiple destination queues
+    ///
+    /// \param enq_time    The bin indexable array to search
+    ///
+    /// \return The enqueue time for the oldest packet
+    Time GetOldestPktRecvTime
+      (BinIndexableArray< std::queue<Time>* >& enq_time);
+
+    /// \brief Updates internal state after a packet is enqueued.
+    /// \param   lat               Latency class of the enqueued packet
+    /// \param   dests             Destination vector for multicast
+    void OnEnqueue(iron::LatencyClass lat, DstVec dests);
+
+    /// \brief Adds the current time to the provided set of enqueue time queue 
+    /// \param   enq_time          The set of enqueue time queues 
+    /// \param   dests             Dest vec specifiying which queues to update
+    void PushEnqueueTime ( BinIndexableArray< std::queue<Time>* >& enq_time,
+			   DstVec dests);
 
     /// \brief Updates internal state after a packet is dequeued.
     ///
     /// \param   dq_info    Information from the packet that was dequeued.
     void OnDequeue(const DequeuedInfo& dq_info);
 
+    /// \brief Removes entries from the heads of a set of enqueue time queue 
+    /// \param   enq_time          The set of enqueue time queues 
+    /// \param   dests             Dest vec specifiying which queues to pop
+    void PopEnqueueTime ( BinIndexableArray< std::queue<Time>* >& enq_time,
+			  DstVec dests, LatencyClass asaplat,
+			  LatencyClass zlrlat);
+
+    /// \brief Rests the sleep time, bytes added, and time of last dequeue
+    /// \param   dests             Dest vec specifiying which queues to update
+    void ResetASAPTracking (DstVec dests);
+    
     /// \brief Process a capacity update from the bpf
     ///
     /// \param pc_num The path controller number
@@ -126,9 +159,11 @@ namespace iron
     ///
     /// \param delay Time since enqueue of queue head
     /// \param isLS True if this is a latency sensitive bin, false otherwise
+    /// \param dst_bidx The bin index associated with this query
     ///
     /// \return The number of zombie bytes that should be added at this time
-    uint32_t BytesToAddGivenDelay(Time delay, bool isLS) const;
+    uint32_t BytesToAddGivenDelay(Time delay, bool isLS,
+				  BinIndex dst_bidx) const;
 
     /// Pool containing packets to use.
     PacketPool&                       packet_pool_;
@@ -150,10 +185,7 @@ namespace iron
     /// delay in dequeuing packets.  This may arise from process swap out,
     /// IO (log files), etc.  This is not counted against the bin in
     /// starvation detection.  Indexed by Bin Index.
-    /// MCAST TODO: consider whether this needs to be per bin. For unicast, we
-    /// only use one value. If not, rename and update comments. If so, make it
-    /// an array of the proper size.
-    uint32_t                          sleep_time_by_bin_;
+    BinIndexableArray<uint32_t>       sleep_time_by_bin_;
 
     /// The last time AddAntiStarvationZombies was called, used
     /// to compute possible sleep time.
@@ -163,10 +195,7 @@ namespace iron
     /// for the packet that is currently at the head of the queue.
     /// This is used for the Anti-Starvation Zombies algorithm.
     /// Indexed by Bin Index.
-    /// MCAST TODO: consider whether this needs to be per bin. For unicast, we
-    /// only use one value. If so, array of the proper size. If not, update
-    /// comments.
-    uint32_t                          delay_bytes_added_;
+    BinIndexableArray<uint32_t>       delay_bytes_added_;
 
     /// The maximum number of zombie bytes we'd need to add to overcome
     /// starvation for this bin. Once we add this number of bytes, this bin
@@ -178,12 +207,21 @@ namespace iron
     /// will have the maximum gradient and should be chosen next.
     uint32_t                          gradient_based_ls_cap_;
 
-    /// The time of the last dequeue per bin.  This is used for the Anti-
-    /// Starvation Zombies algorithm.
-    /// MCAST TODO: consider whether this needs to be per bin. For unicast, we
-    /// only use one value. If so, array of the proper size. If not, update
-    /// comments.
-    Time                              time_of_last_dequeue_;
+    /// This tracks enqueue times for normal latency (NL) pkts. This is used
+    /// by the Anti-Starvation Zombies algorithm to determine the age of the
+    /// oldest NL packet in the queue.
+    /// If the associated queue holds multicast packets, this keeps enqueue
+    /// times per destination bin. For unicast packets, only a single
+    /// enqueue time is kept.
+    BinIndexableArray< std::queue<Time>* > enqueue_time_;  
+
+    /// This tracks enqueue times for latency senstive (LS) pkts. This is used
+    /// by the Anti-Starvation Zombies algorithm to determine the age of the
+    /// oldest LS packet in the queue.
+    /// If the associated queue holds multicast packets, this keeps enqueue
+    /// times per destination bin. For unicast packets, only a single
+    /// enqueue time is kept.
+    BinIndexableArray< std::queue<Time>* > enqueue_time_ls_;  
 
     /// Current capacity of a path controller in bps, indexed by
     /// the path controller number
@@ -191,6 +229,7 @@ namespace iron
 
     /// Average capacity over all bins in bps
     uint64_t                          average_capacity_;
+    
 
     /// True once the initialization function has been called.
     bool                              initialized_;

@@ -35,25 +35,6 @@
  */
 /* IRON: end */
 
-//============================================================================
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-//============================================================================
-
 #include "sliq_cc_interface.h"
 #include "sliq_cc_copa.h"
 #include "sliq_cc_copa2.h"
@@ -65,9 +46,9 @@
 #include "unused.h"
 
 using ::sliq::CongCtrlInterface;
+using ::sliq::CopaBeta1;
+using ::sliq::CopaBeta2;
 using ::sliq::Copa;
-using ::sliq::Copa2;
-using ::sliq::Copa3;
 using ::sliq::Cubic;
 using ::sliq::CubicBytes;
 using ::sliq::FixedRate;
@@ -105,19 +86,19 @@ CongCtrlInterface* CongCtrlInterface::Create(
       cc_alg = new (std::nothrow) Cubic(conn_id, is_client, rtt_mgr);
       break;
 
-    case COPA_CONST_DELTA_CC:
-    case COPA_M_CC:
-      cc_alg = new (std::nothrow) Copa(conn_id, is_client, rng);
+    case COPA1_CONST_DELTA_CC:
+    case COPA1_M_CC:
+      cc_alg = new (std::nothrow) CopaBeta1(conn_id, is_client, rng);
       break;
 
     case COPA2_CC:
-      cc_alg = new (std::nothrow) Copa2(conn_id, is_client, cc_id, conn,
-                                        framer, packet_pool, timer);
+      cc_alg = new (std::nothrow) CopaBeta2(conn_id, is_client, cc_id, conn,
+                                            framer, packet_pool, timer);
       break;
 
-    case COPA3_CC:
-      cc_alg = new (std::nothrow) Copa3(conn_id, is_client, cc_id, conn,
-                                        framer, packet_pool, timer);
+    case COPA_CC:
+      cc_alg = new (std::nothrow) Copa(conn_id, is_client, cc_id, conn,
+                                       framer, packet_pool, timer);
       break;
 
     case FIXED_RATE_TEST_CC:

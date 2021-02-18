@@ -124,7 +124,7 @@ LEC_BIN=${HOME}/iron_exp_staging/bin/LinkEmClient
 # Enclave 1 LinkEm configuration.
 ${LEC_BIN} -h $enclave1_le1_node$ -P 2 -s $enclave2_iron_wan1_addr$/32
 ${LEC_BIN} -h $enclave1_le1_node$ -P 2 -I 1 -b 80000
-${LEC_BIN} -h $enclave1_le1_node$ -P 2 -I 2 -b 80000 -t 10000 -d 60 -E SPER -J None
+${LEC_BIN} -h $enclave1_le1_node$ -P 2 -I 2 -b 80000 -t 10000 -d 65 -E SPER -J None
 ${LEC_BIN} -h $enclave1_le1_node$ -P 3 -s $enclave3_iron_wan1_addr$/32
 ${LEC_BIN} -h $enclave1_le1_node$ -P 3 -I 1 -b 25000
 ${LEC_BIN} -h $enclave1_le1_node$ -P 3 -I 2 -b 25000 -t 10000 -d 5 -E SPER -J None
@@ -132,7 +132,7 @@ ${LEC_BIN} -h $enclave1_le1_node$ -P 3 -I 2 -b 25000 -t 10000 -d 5 -E SPER -J No
 # Enclave 2 LinkEm configuration.
 ${LEC_BIN} -h $enclave2_le1_node$ -P 1 -s $enclave1_iron_wan1_addr$/32
 ${LEC_BIN} -h $enclave2_le1_node$ -P 1 -I 1 -b 80000
-${LEC_BIN} -h $enclave2_le1_node$ -P 1 -I 2 -b 80000 -t 10000 -d 60 -E SPER -J None
+${LEC_BIN} -h $enclave2_le1_node$ -P 1 -I 2 -b 80000 -t 10000 -d 65 -E SPER -J None
 ${LEC_BIN} -h $enclave2_le1_node$ -P 3 -s $enclave3_iron_wan1_addr$/32
 ${LEC_BIN} -h $enclave2_le1_node$ -P 3 -I 1 -b 25000
 ${LEC_BIN} -h $enclave2_le1_node$ -P 3 -I 2 -b 25000 -t 10000 -d 5 -E SPER -J None

@@ -47,8 +47,8 @@
 
 using ::sliq::Capacity;
 using ::sliq::CongCtrlAlg;
-using ::sliq::Copa;
-using ::sliq::CopaMode;
+using ::sliq::CopaBeta1;
+using ::sliq::CopaBeta1Mode;
 using ::sliq::PktSeqNumber;
 using ::iron::Log;
 using ::iron::RNG;
@@ -58,7 +58,7 @@ using ::iron::Time;
 namespace
 {
   /// The class name string for logging.
-  const char*     UNUSED(kClassName)    = "Copa";
+  const char*     UNUSED(kClassName)    = "CopaBeta1";
 
   /// The default value for delta.
   const double    kDefaultDelta         = 0.1;
@@ -127,7 +127,7 @@ namespace
   /// fixed at kDefaultIntersendTime.
   const uint64_t  kNumProbePkts         = 10;
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
 
   /// The amount of inter-send time randomization required by the minimum RTT
   /// tracking algorithm.
@@ -140,7 +140,7 @@ namespace
   /// be updated.
   const double    kMinRttTrkThreshold   = 1.5;
 
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
   /// The packet overhead due to Ethernet (8 + 14 + 4 = 26 bytes), IP
   /// (20 bytes), and UDP (8 bytes), in bytes.  This assumes that no 802.1Q
@@ -172,7 +172,7 @@ namespace
 
 
 //============================================================================
-Copa::Copa(EndptId conn_id, bool is_client, RNG& rng)
+CopaBeta1::CopaBeta1(EndptId conn_id, bool is_client, RNG& rng)
     : CongCtrlInterface(conn_id, is_client),
       rng_(rng),
       mode_(CONSTANT_DELTA),
@@ -188,14 +188,14 @@ Copa::Copa(EndptId conn_id, bool is_client, RNG& rng)
       nxt_cc_seq_num_(0),
       ack_cc_seq_num_(0),
       unacked_pkts_(NULL),
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
       mrt_cnt_(0),
       mrt_trips_(0),
       nxt_mrt_pkts_idx_(0),
       num_mrt_pts_(0),
       mrt_pkts_(NULL),
       mrt_line_(NULL),
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
       start_time_point_(),
       next_send_time_(),
       prev_delta_update_time_(),
@@ -224,7 +224,7 @@ Copa::Copa(EndptId conn_id, bool is_client, RNG& rng)
 }
 
 //============================================================================
-Copa::~Copa()
+CopaBeta1::~CopaBeta1()
 {
   // Delete the arrays of information.
   if (unacked_pkts_ != NULL)
@@ -233,7 +233,7 @@ Copa::~Copa()
     unacked_pkts_ = NULL;
   }
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
   if (mrt_pkts_ != NULL)
   {
     delete [] mrt_pkts_;
@@ -245,11 +245,11 @@ Copa::~Copa()
     delete [] mrt_line_;
     mrt_line_ = NULL;
   }
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 }
 
 //============================================================================
-bool Copa::Configure(const CongCtrl& cc_params)
+bool CopaBeta1::Configure(const CongCtrl& cc_params)
 {
   // Allocate the circular array of unACKed packet information.
   unacked_pkts_ = new (std::nothrow) PacketData[kMaxCongCtrlWindowPkts];
@@ -261,7 +261,7 @@ bool Copa::Configure(const CongCtrl& cc_params)
     return false;
   }
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
   // Allocate the circular array of minimum RTT tracking packet information.
   mrt_pkts_ = new (std::nothrow) MinRttPktData[kMaxCongCtrlWindowPkts];
 
@@ -284,7 +284,7 @@ bool Copa::Configure(const CongCtrl& cc_params)
          "minRTT line data.\n", conn_id_);
     return false;
   }
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
   // If delta is not set in time, we don't want it to be 0.
   delta_       = kDefaultDelta;
@@ -293,20 +293,20 @@ bool Copa::Configure(const CongCtrl& cc_params)
   if (random_send_)
   {
     LogW(kClassName, __func__, "Conn %" PRIEndptId ": Warning, using Copa "
-         "with randomized inter-send times, performance will be "
+         "Beta 1 with randomized inter-send times, performance will be "
          "sub-optimal.\n", conn_id_);
   }
 
   switch (cc_params.algorithm)
   {
-    case COPA_CONST_DELTA_CC:
+    case COPA1_CONST_DELTA_CC:
       mode_  = CONSTANT_DELTA;
       delta_ = cc_params.copa_delta;
       LogI(kClassName, __func__, "Conn %" PRIEndptId ": Constant delta mode "
            "with delta = %f.\n", conn_id_, delta_);
       break;
 
-    case COPA_M_CC:
+    case COPA1_M_CC:
       mode_  = MAX_THROUGHPUT;
       delta_ = kDefaultDelta;
       LogI(kClassName, __func__, "Conn %" PRIEndptId ": Maximize throughput "
@@ -323,60 +323,60 @@ bool Copa::Configure(const CongCtrl& cc_params)
 }
 
 //============================================================================
-void Copa::Connected(const Time& /* now */, const Time& /* rtt */)
+void CopaBeta1::Connected(const Time& /* now */, const Time& /* rtt */)
 {
   return;
 }
 
 //============================================================================
-bool Copa::UseRexmitPacing()
+bool CopaBeta1::UseRexmitPacing()
 {
   return true;
 }
 
 //============================================================================
-bool Copa::UseCongWinForCapEst()
+bool CopaBeta1::UseCongWinForCapEst()
 {
   return false;
 }
 
 //============================================================================
-bool Copa::UseUnaPktReporting()
+bool CopaBeta1::UseUnaPktReporting()
 {
   return false;
 }
 
 //============================================================================
-bool Copa::SetTcpFriendliness(uint32_t /* num_flows */)
+bool CopaBeta1::SetTcpFriendliness(uint32_t /* num_flows */)
 {
   return true;
 }
 
 //============================================================================
-bool Copa::ActivateStream(StreamId /* stream_id */,
-                          PktSeqNumber /* init_send_seq_num */)
+bool CopaBeta1::ActivateStream(StreamId /* stream_id */,
+                               PktSeqNumber /* init_send_seq_num */)
 {
   return true;
 }
 
 //============================================================================
-bool Copa::DeactivateStream(StreamId /* stream_id */)
+bool CopaBeta1::DeactivateStream(StreamId /* stream_id */)
 {
   return true;
 }
 
 //============================================================================
-void Copa::OnAckPktProcessingStart(const Time& /* ack_time */)
+void CopaBeta1::OnAckPktProcessingStart(const Time& /* ack_time */)
 {
   return;
 }
 
 //============================================================================
-void Copa::OnRttUpdate(StreamId stream_id, const Time& ack_time,
-                       PktTimestamp /* send_ts */, PktTimestamp /* recv_ts */,
-                       PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
-                       const Time& rtt, uint32_t /* bytes */,
-                       float /* cc_val */)
+void CopaBeta1::OnRttUpdate(StreamId stream_id, const Time& ack_time,
+                            PktTimestamp /* send_ts */,
+                            PktTimestamp /* recv_ts */, PktSeqNumber seq_num,
+                            PktSeqNumber cc_seq_num, const Time& rtt,
+                            uint32_t /* bytes */, float /* cc_val */)
 {
   double  calc_rtt = rtt.ToDouble();
 
@@ -392,17 +392,17 @@ void Copa::OnRttUpdate(StreamId stream_id, const Time& ack_time,
   {
     min_rtt_ = calc_rtt;
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
     // Reset the minimum RTT tracking algorithm.
     num_mrt_pts_ = 0;
     ++mrt_cnt_;
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
     LogA(kClassName, __func__, "Conn %" PRIEndptId ": Updated min_rtt=%f\n",
          conn_id_, min_rtt_);
   }
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
   // Look up the packet info.
   PacketData&  pd = unacked_pkts_[cc_seq_num % kMaxCongCtrlWindowPkts];
 
@@ -469,7 +469,7 @@ void Copa::OnRttUpdate(StreamId stream_id, const Time& ack_time,
     num_mrt_pts_ = 0;
     ++mrt_cnt_;
   }
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
   double  fp_now = CurrentTime(ack_time);
 
@@ -501,17 +501,19 @@ void Copa::OnRttUpdate(StreamId stream_id, const Time& ack_time,
 }
 
 //============================================================================
-bool Copa::OnPacketLost(StreamId /* stream_id */, const Time& /* ack_time */,
-                        PktSeqNumber /* seq_num */,
-                        PktSeqNumber /* cc_seq_num */, uint32_t /* bytes */)
+bool CopaBeta1::OnPacketLost(StreamId /* stream_id */,
+                             const Time& /* ack_time */,
+                             PktSeqNumber /* seq_num */,
+                             PktSeqNumber /* cc_seq_num */,
+                             uint32_t /* bytes */)
 {
   return true;
 }
 
 //============================================================================
-void Copa::OnPacketAcked(StreamId stream_id, const Time& ack_time,
-                         PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
-                         PktSeqNumber ne_seq_num, uint32_t bytes)
+void CopaBeta1::OnPacketAcked(StreamId stream_id, const Time& ack_time,
+                              PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
+                              PktSeqNumber ne_seq_num, uint32_t bytes)
 {
 #ifdef SLIQ_CC_DEBUG
   LogD(kClassName, __func__, "** Conn %" PRIEndptId ": On ACK: stream_id=%"
@@ -581,7 +583,7 @@ void Copa::OnPacketAcked(StreamId stream_id, const Time& ack_time,
 }
 
 //============================================================================
-void Copa::OnAckPktProcessingDone(const Time& ack_time)
+void CopaBeta1::OnAckPktProcessingDone(const Time& ack_time)
 {
   // Update the unACKed packet information.
   if (SEQ_GEQ(ack_cc_seq_num_, una_cc_seq_num_) &&
@@ -665,9 +667,11 @@ void Copa::OnAckPktProcessingDone(const Time& ack_time)
 }
 
 //============================================================================
-PktSeqNumber Copa::OnPacketSent(StreamId stream_id, const Time& send_time,
-                                PktSeqNumber seq_num, uint32_t pld_bytes,
-                                uint32_t /* tot_bytes */, float& /* cc_val */)
+PktSeqNumber CopaBeta1::OnPacketSent(StreamId stream_id,
+                                     const Time& send_time,
+                                     PktSeqNumber seq_num, uint32_t pld_bytes,
+                                     uint32_t /* tot_bytes */,
+                                     float& /* cc_val */)
 {
   // Make sure that the circular array size will not be exceeded.
   if ((nxt_cc_seq_num_ - una_cc_seq_num_) >= kMaxCongCtrlWindowPkts)
@@ -712,7 +716,7 @@ PktSeqNumber Copa::OnPacketSent(StreamId stream_id, const Time& send_time,
        calc_intersend_time_);
 #endif
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
   // Add a minRTT element for the packet.
   MinRttPktData&  mp = mrt_pkts_[nxt_mrt_pkts_idx_];
 
@@ -733,7 +737,7 @@ PktSeqNumber Copa::OnPacketSent(StreamId stream_id, const Time& send_time,
        "sent_bytes=%f\n", conn_id_, pd.min_rtt_index, cc_seq_num,
        mp.send_time, mp.sent_bytes);
 #endif
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
   // Set the current RTT estimate for unACKed packets equal to that for ACKed
   // packets.
@@ -763,10 +767,10 @@ PktSeqNumber Copa::OnPacketSent(StreamId stream_id, const Time& send_time,
 }
 
 //============================================================================
-void Copa::OnPacketResent(StreamId stream_id, const Time& send_time,
-                          PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
-                          uint32_t pld_bytes, uint32_t /* tot_bytes */,
-                          bool rto, bool orig_cc, float& /* cc_val */)
+void CopaBeta1::OnPacketResent(StreamId stream_id, const Time& send_time,
+                               PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
+                               uint32_t pld_bytes, uint32_t /* tot_bytes */,
+                               bool rto, bool orig_cc, float& /* cc_val */)
 {
 #ifdef SLIQ_CC_DEBUG
   LogD(kClassName, __func__, "** Conn %" PRIEndptId ": On Resend: stream=%"
@@ -801,7 +805,7 @@ void Copa::OnPacketResent(StreamId stream_id, const Time& send_time,
 #endif
     }
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
     // Add a new minRTT element for the packet.  This leaves any old minRTT
     // elements for previous transmissions/retransmissions of the packet.
     if (pd.cc_seq_num == cc_seq_num)
@@ -833,7 +837,7 @@ void Copa::OnPacketResent(StreamId stream_id, const Time& send_time,
            "element for cc_seq_num=%" PRIPktSeqNumber ".\n", conn_id_,
            cc_seq_num);
     }
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
   }
 
   // Set the current RTT estimate for unACKed packets equal to that for ACKed
@@ -862,24 +866,24 @@ void Copa::OnPacketResent(StreamId stream_id, const Time& send_time,
 }
 
 //============================================================================
-void Copa::OnRto(bool /* pkt_rexmit */)
+void CopaBeta1::OnRto(bool /* pkt_rexmit */)
 {
   return;
 }
 
 //============================================================================
-void Copa::OnOutageEnd()
+void CopaBeta1::OnOutageEnd()
 {
 #ifdef SLIQ_CC_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId ": Outage is over.\n",
        conn_id_);
 #endif
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
   // Reset the minimum RTT tracking algorithm.
   num_mrt_pts_ = 0;
   ++mrt_cnt_;
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
   // Find the last known good value for the inter-send time when the outage
   // began.
@@ -935,23 +939,23 @@ void Copa::OnOutageEnd()
 }
 
 //============================================================================
-bool Copa::CanSend(const Time& /* now */, uint32_t /* bytes */)
+bool CopaBeta1::CanSend(const Time& /* now */, uint32_t /* bytes */)
 {
-  // Copa has no congestion window, but the circular array of packet
+  // Copa Beta 1 has no congestion window, but the circular array of packet
   // information must not be exceeded.
   return ((nxt_cc_seq_num_ - una_cc_seq_num_) < kMaxCongCtrlWindowPkts);
 }
 
 //============================================================================
-bool Copa::CanResend(const Time& /* now */, uint32_t /* bytes */,
-                     bool /* orig_cc */)
+bool CopaBeta1::CanResend(const Time& /* now */, uint32_t /* bytes */,
+                          bool /* orig_cc */)
 {
-  // Copa paces fast retransmissions, so this can just return true.
+  // Copa Beta 1 paces fast retransmissions, so this can just return true.
   return true;
 }
 
 //============================================================================
-Time Copa::TimeUntilSend(const Time& now)
+Time CopaBeta1::TimeUntilSend(const Time& now)
 {
   // Check if the send can happen immediately.
   if (now.Add(timer_tolerance_) >= next_send_time_)
@@ -964,27 +968,27 @@ Time Copa::TimeUntilSend(const Time& now)
 }
 
 //============================================================================
-Capacity Copa::PacingRate()
+Capacity CopaBeta1::SendPacingRate()
 {
   double  pacing_rate_bps = (((kNominalPktSizeBytes + kPktOverheadBytes) *
                               8.0) / calc_intersend_time_);
 
 #ifdef SLIQ_CC_DEBUG
-  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Pacing rate %f bps.\n",
-       conn_id_, pacing_rate_bps);
+  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Send pacing rate %f "
+       "bps.\n", conn_id_, pacing_rate_bps);
 #endif
 
   return static_cast<Capacity>(pacing_rate_bps);
 }
 
 //============================================================================
-Capacity Copa::CapacityEstimate()
+Capacity CopaBeta1::SendRate()
 {
-  return PacingRate();
+  return SendPacingRate();
 }
 
 //============================================================================
-bool Copa::GetSyncParams(uint16_t& seq_num, uint32_t& cc_params)
+bool CopaBeta1::GetSyncParams(uint16_t& seq_num, uint32_t& cc_params)
 {
   // Only send if there is a synchronization parameter waiting.
   if ((mode_ == MAX_THROUGHPUT) && (is_client_) && (sync_params_ != 0))
@@ -1007,8 +1011,8 @@ bool Copa::GetSyncParams(uint16_t& seq_num, uint32_t& cc_params)
 }
 
 //============================================================================
-void Copa::ProcessSyncParams(const Time& now, uint16_t seq_num,
-                             uint32_t cc_params)
+void CopaBeta1::ProcessSyncParams(const Time& now, uint16_t seq_num,
+                                  uint32_t cc_params)
 {
   if ((mode_ == MAX_THROUGHPUT) && (!is_client_) && (cc_params != 0) &&
       CC_SYNC_SEQ_NUM_OK(seq_num, sync_recv_seq_num_))
@@ -1065,48 +1069,48 @@ void Copa::ProcessSyncParams(const Time& now, uint16_t seq_num,
 }
 
 //============================================================================
-void Copa::ProcessCcPktTrain(const Time& now, CcPktTrainHeader& hdr)
+void CopaBeta1::ProcessCcPktTrain(const Time& now, CcPktTrainHeader& hdr)
 {
   return;
 }
 
 //============================================================================
-bool Copa::InSlowStart()
+bool CopaBeta1::InSlowStart()
 {
   // Consider the probe packets as a form of slow start.
   return (num_pkts_acked_ < kNumProbePkts);
 }
 
 //============================================================================
-bool Copa::InRecovery()
+bool CopaBeta1::InRecovery()
 {
-  // There is no fast recovery in Copa.
+  // There is no fast recovery in Copa Beta 1.
   return false;
 }
 
 //============================================================================
-uint32_t Copa::GetCongestionWindow()
+uint32_t CopaBeta1::GetCongestionWindow()
 {
-  // Copa is not window-based.
+  // Copa Beta 1 is not window-based.
   return 0;
 }
 
 //============================================================================
-uint32_t Copa::GetSlowStartThreshold()
+uint32_t CopaBeta1::GetSlowStartThreshold()
 {
-  // Copa is not window-based.
+  // Copa Beta 1 is not window-based.
   return 0;
 }
 
 //============================================================================
-CongCtrlAlg Copa::GetCongestionControlType()
+CongCtrlAlg CopaBeta1::GetCongestionControlType()
 {
-  return ((mode_ == CONSTANT_DELTA) ? COPA_CONST_DELTA_CC :
-          COPA_M_CC);
+  return ((mode_ == CONSTANT_DELTA) ? COPA1_CONST_DELTA_CC :
+          COPA1_M_CC);
 }
 
 //============================================================================
-void Copa::Close()
+void CopaBeta1::Close()
 {
 #ifdef SLIQ_CC_DEBUG
   LogI(kClassName, __func__, "Conn %" PRIEndptId ": Number of packets: "
@@ -1116,7 +1120,7 @@ void Copa::Close()
 }
 
 //============================================================================
-double Copa::CurrentTime(const Time& now)
+double CopaBeta1::CurrentTime(const Time& now)
 {
   double  rv = ((now - start_time_point_).ToDouble());
 
@@ -1130,7 +1134,7 @@ double Copa::CurrentTime(const Time& now)
 }
 
 //============================================================================
-double Copa::RandomizeIntersend(double intersend)
+double CopaBeta1::RandomizeIntersend(double intersend)
 {
   if (intersend == 0.0)
   {
@@ -1158,7 +1162,7 @@ double Copa::RandomizeIntersend(double intersend)
 }
 
 //============================================================================
-void Copa::UpdateUnackedRttEstimate(double fp_now)
+void CopaBeta1::UpdateUnackedRttEstimate(double fp_now)
 {
   // Update the current RTT estimate for unACKed packets.
   for (PktSeqNumber cc_seq_num = una_cc_seq_num_;
@@ -1219,7 +1223,7 @@ void Copa::UpdateUnackedRttEstimate(double fp_now)
 }
 
 //============================================================================
-void Copa::UpdateNextSendTime(const Time& now, size_t bytes)
+void CopaBeta1::UpdateNextSendTime(const Time& now, size_t bytes)
 {
   // Update the next send time using the packet size and the stored next send
   // time.  This maintains inter-send time accuracy.
@@ -1254,7 +1258,7 @@ void Copa::UpdateNextSendTime(const Time& now, size_t bytes)
 }
 
 //============================================================================
-void Copa::UpdateDelta(const Time& now, bool /* pkt_lost */)
+void CopaBeta1::UpdateDelta(const Time& now, bool /* pkt_lost */)
 {
   // If delta is being held constant, then return immediately.
   if (mode_ == CONSTANT_DELTA)
@@ -1344,7 +1348,7 @@ void Copa::UpdateDelta(const Time& now, bool /* pkt_lost */)
            "no policy controller action taken.\n", conn_id_);
   }
 
-  // Following the rules for Copa's policy controller algorithm, use an
+  // Following the rules for Copa Beta 1's policy controller algorithm, use an
   // additive-increase/multiplicative-decrease (AIMD) adjustment algorithm to
   // limit the changes made to delta.  The result is in "target_delta".
   if (action > 0)  // Become less aggressive.
@@ -1384,7 +1388,7 @@ void Copa::UpdateDelta(const Time& now, bool /* pkt_lost */)
   // Update the local delta value.
   local_sync_delta_ = target_delta;
 
-  // Possibly update the delta value used by Copa.
+  // Possibly update the delta value used by Copa Beta 1.
   double  UNUSED(old_delta) = delta_;
 
   if (is_client_)
@@ -1445,14 +1449,14 @@ void Copa::UpdateDelta(const Time& now, bool /* pkt_lost */)
        (calc_intersend_time_ / min_rtt_), delta_);
 #endif
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
   // If delta is changing, then reset the minimum RTT tracking algorithm.
   if (delta_ != old_delta)
   {
     num_mrt_pts_ = 0;
     ++mrt_cnt_;
   }
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
   // Record the time that delta was updated.
   prev_delta_update_time_ = now;
@@ -1463,7 +1467,7 @@ void Copa::UpdateDelta(const Time& now, bool /* pkt_lost */)
 }
 
 //============================================================================
-void Copa::UpdateIntersendTime(const Time& now)
+void CopaBeta1::UpdateIntersendTime(const Time& now)
 {
   // Get the RTT estimate to use.
   double  rtt_ewma = rtt_acked_.max(rtt_unacked_);
@@ -1536,7 +1540,7 @@ void Copa::UpdateIntersendTime(const Time& now)
   }
   else
   {
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
     // In order for the minimum RTT tracking algorithm to operate correctly,
     // the inter-send times must be randomized using a uniform distribution.
     intersend_time_ = (calc_intersend_time_ *
@@ -1545,7 +1549,7 @@ void Copa::UpdateIntersendTime(const Time& now)
 #else
     // Do not randomize the inter-send time.
     intersend_time_ = calc_intersend_time_;
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
   }
 
 #ifdef SLIQ_CC_DEBUG
@@ -1559,10 +1563,10 @@ void Copa::UpdateIntersendTime(const Time& now)
 #endif
 }
 
-#ifdef SLIQ_COPA_MRT
+#ifdef SLIQ_COPA1_MRT
 
 //============================================================================
-void Copa::UpdateMinRtt()
+void CopaBeta1::UpdateMinRtt()
 {
   // First, compute the mean of both X and Y.
   uint32_t  i     = 0;
@@ -1739,10 +1743,10 @@ void Copa::UpdateMinRtt()
   }
 }
 
-#endif // SLIQ_COPA_MRT
+#endif // SLIQ_COPA1_MRT
 
 //============================================================================
-Copa::TimeEwma::TimeEwma(EndptId conn_id, double alpha)
+CopaBeta1::TimeEwma::TimeEwma(EndptId conn_id, double alpha)
     : conn_id_(conn_id),
       valid_(false),
       ewma_(0.0),
@@ -1757,7 +1761,7 @@ Copa::TimeEwma::TimeEwma(EndptId conn_id, double alpha)
 }
 
 //============================================================================
-void Copa::TimeEwma::Update(double value, double now, double rtt)
+void CopaBeta1::TimeEwma::Update(double value, double now, double rtt)
 {
   if ((now < last_ts_) && ((last_ts_ - now) < (0.5 * kMaxFpTime)))
   {
@@ -1808,7 +1812,7 @@ void Copa::TimeEwma::Update(double value, double now, double rtt)
 }
 
 //============================================================================
-void Copa::TimeEwma::ForceSet(double value, double now)
+void CopaBeta1::TimeEwma::ForceSet(double value, double now)
 {
   valid_   = true;
   ewma_    = value;

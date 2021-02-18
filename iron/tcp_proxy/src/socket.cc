@@ -90,8 +90,14 @@ namespace
   /// The default initial rto, in microseconds
   const uint32_t  kDefaultInitialRto = 6000000;
 
-  /// The default MTU in bytes
-  const uint32_t  kDefaultMTU = 1200;
+  /// The default MTU in bytes.
+  //
+  // We set the default MTU to be 1280 (desired MSS) + 40 bytes (TCP and IP
+  // header lengths). The 1280 byte desired MSS and a window scale of 8
+  // ensures that the advertised window is a multiple of the MSS. NOTE: if we
+  // ever need to reduce this MTU we will also need to adjust the window
+  // scaling.
+  const uint32_t  kDefaultMTU = 1320; //1200;
 
   /// The default ACK behavior.
   const uint32_t  kDefaultAckFreq = 2;
@@ -304,24 +310,35 @@ Socket::Socket(TcpProxy& tcp_proxy, iron::PacketPool& packet_pool,
   ph_.mbz      = 0;
   ph_.protocol = IPPROTO_TCP;
 
-  // Default to running with Timestamps and SACK.
+  // Default to running with Timestamps.
   capabilities_ |= CAP_TIMESTAMP;
   sock_flags_   |= TF_REQ_TSTMP;
 
-  capabilities_ |= CAP_SACK;
-  sock_flags_   |= TF_REQ_SACK;
+  // By default, we won't enable SACK. We do this because we want the
+  // advertised window on the LAN-facing socket to be a multiple of the
+  // MSS. Enabling SACK makes this more difficult. Additionally, we shouldn't
+  // observe any loss on the LAN-facing socket. The WAN-facing socket will
+  // have SACK enabled as controlled by the kDefaultWanIfSack constant in
+  // tcp_proxy_config.cc.
+  //
+  // capabilities_ |= CAP_SACK;
+  // sock_flags_   |= TF_REQ_SACK;
 
   capabilities_ |= CAP_CONGEST;
 
   // Say we'll scale our windows.
   sock_flags_      |= TF_REQ_SCALE;
-  request_r_scale_  = 0;
 
-  while ((request_r_scale_ < TCP_MAX_WINSHIFT) &&
-         ((TCP_MAXWIN << request_r_scale_) < (int)peer_send_buf_max_bytes_))
-  {
-    request_r_scale_++;
-  }
+  // For now, we set the advertised window scaling to be the mimimum of 8 and
+  // TCP_MAX_WINSHIFT. This is because with an MTU of 1332 bytes we will be
+  // ensured to advertise a window that is a multiple of the MSS.
+  request_r_scale_  = 8 < TCP_MAX_WINSHIFT ? 8 : TCP_MAX_WINSHIFT;
+
+  // while ((request_r_scale_ < TCP_MAX_WINSHIFT) &&
+  //        ((TCP_MAXWIN << request_r_scale_) < (int)peer_send_buf_max_bytes_))
+  // {
+  //   request_r_scale_++;
+  // }
 
   // Create the Congestion Control Algorithms.
   for (int i = 0; i < MAX_CC_ALG_CNT; i++)
@@ -2075,13 +2092,18 @@ void Socket::SetProxyOptions()
   // buffer size.
   if ((state_ < TCP_SYN_SENT) && (sock_flags_ & TF_REQ_SCALE))
   {
-    request_r_scale_ = 0;
+    // For now, we set the advertised window scaling to be the mimimum of 8
+    // and TCP_MAX_WINSHIFT. This is because with an MTU of 1332 bytes we will
+    // be ensured to advertise a window that is a multiple of the MSS.
+    request_r_scale_  = 8 < TCP_MAX_WINSHIFT ? 8 : TCP_MAX_WINSHIFT;
 
-    while ((request_r_scale_ < TCP_MAX_WINSHIFT) &&
-           ((TCP_MAXWIN << request_r_scale_) < (int)peer_send_buf_max_bytes_))
-    {
-      request_r_scale_++;
-    }
+    // request_r_scale_ = 0;
+
+    // while ((request_r_scale_ < TCP_MAX_WINSHIFT) &&
+    //        ((TCP_MAXWIN << request_r_scale_) < (int)peer_send_buf_max_bytes_))
+    // {
+    //   request_r_scale_++;
+    // }
   }
 
   // Set the socket's congestion control configuration items.
@@ -2123,13 +2145,14 @@ void Socket::SetProxyOptions()
   }
 
   // Set the socket's SACK behavior.
-  if ((i_val = proxy_config_.GetIfSack(cfg_if_id_)) == 0)
+  if (((cfg_if_id_ == WAN) &&
+       (i_val = proxy_config_.GetIfSack(cfg_if_id_)) == 1))
   {
     // Can't set option after initiating connection.
     if ((state_ == TCP_NASCENT) || (state_ == TCP_CLOSE))
     {
-      capabilities_ &= ~CAP_SACK;
-      sock_flags_   &= ~TF_REQ_SACK;
+      capabilities_ |= CAP_SACK;
+      sock_flags_   |= TF_REQ_SACK;
     }
   }
 
@@ -2143,8 +2166,28 @@ void Socket::SetProxyOptions()
   t_rxtmaxshift_ = proxy_config_.rtt_max_shift();
 
   // Set the socket's mtu value
-  mtu_ = proxy_config_.GetIfMtu(cfg_if_id_);
-
+  // For now, don't let user configure LAN-facing socket's MTU. We do this so
+  // that we ensure that the advertised window to the application is a
+  // multiple of the MSS which will eliminate overhead for short packets.
+  if (cfg_if_id_ != LAN)
+  {
+    mtu_ = proxy_config_.GetIfMtu(cfg_if_id_);
+  }
+  else
+  {
+    if ((capabilities_ & CAP_TIMESTAMP) == CAP_TIMESTAMP)
+    {
+      // The socket being configured is the LAN-facing socket and timestamps
+      // will be included in the TCP header. Since we are including
+      // timestamps, we will increase the MTU by 12 bytes (size of the
+      // timestamp option). We do this because the MSS is decreased by the
+      // size of any TCP header options. We still want to have a payload size
+      // of 1280 bytes so we must increase the size of the MTU here to ensure
+      // that. NOTE: in order avoid issues with SACK blocks in the TCP header
+      // options we have disabled SACK on the LAN-facing socket.
+      mtu_ += 12;
+    }
+  }
 }
 
 //============================================================================
@@ -2428,7 +2471,7 @@ void Socket::WriteStats(string& log_str, Writer<StringBuffer>* writer)
         StringUtils::FormatString(256, "'bin_id':'%" PRIBinId "', ",
                                   bin_map_.GetPhyBinId(bin_idx_)));
     }
-    
+
 
     log_str.append(
       StringUtils::FormatString(256, "'flow_state':'%" PRIu8 "', ", flow_state));
@@ -4785,6 +4828,9 @@ void Socket::UpdateWinSizeAndAckNum(struct tcphdr* tcp_hdr)
   {
     temp = 0;
   }
+
+  // Ensure that the window size is a multiple of the MSS.
+  temp = (temp / (uint32_t)t_maxseg_) * (uint32_t)t_maxseg_;
 
   if (temp > (uint32_t)(TCP_MAXWIN << rcv_scale_))
   {

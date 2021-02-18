@@ -71,8 +71,8 @@ INCLUDE_PATH = -I../include \
 # Include the "-DSLIQ_DEBUG" and/or the "-DSLIQ_CC_DEBUG" flags in the
 # OPT_FLAGS to enable debug logging in the SLIQ source code.
 #
-# Include the "-DSLIQ_COPA_MRT" flag in the OPT_FLAGS to enable the Copa
-# minimum RTT tracking algorithm.
+# Include the "-DSLIQ_COPA1_MRT" flag in the OPT_FLAGS to enable the Copa Beta
+# 1 minimum RTT tracking algorithm.
 OPT_FLAGS = -pthread
 
 #-----------------------------------------------------------------------------

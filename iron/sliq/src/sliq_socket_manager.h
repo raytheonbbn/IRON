@@ -73,11 +73,13 @@ namespace sliq
   struct WriteResult
   {
     WriteResult() : status(WRITE_STATUS_OK), bytes_written(0), error_code(0)
-    { }
+    {}
     WriteResult(WriteStatus s, int bytes_written_or_error_code)
         : status(s), bytes_written(bytes_written_or_error_code),
           error_code(bytes_written_or_error_code)
-    { }
+    {}
+    virtual ~WriteResult()
+    {}
 
     WriteStatus  status;
     int          bytes_written;  // Only valid if status is WRITE_STATUS_OK
@@ -239,6 +241,11 @@ namespace sliq
     /// \brief A structure for socket information.
     struct SockInfo
     {
+      SockInfo() : fd_event_info(), next(NULL), prev(NULL)
+      {}
+      virtual ~SockInfo()
+      {}
+
       /// The socket's event information.
       iron::FdEventInfo  fd_event_info;
 

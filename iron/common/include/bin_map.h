@@ -406,6 +406,14 @@ namespace iron
 
     // ---------- Multicast Group Management ----------
 
+    /// \brief Add a dynamic multicast group.
+    ///
+    /// \param  mcast_addr  The multicast IPv4 address of the group.
+    ///
+    /// \return The Bin Index associated with the Multicast ID on success, or
+    ///         kInvalidBinIndex otherwise.
+    BinIndex AddMcastGroup(const iron::Ipv4Address& mcast_addr);
+
     /// \brief Add the Destination Bin ID of a Destination Bin Index to the
     ///        destination vector (DstVec) of a dynamic multicast group.
     ///
@@ -642,6 +650,25 @@ namespace iron
     ///          Index.
     std::string GetIdToLog(BinIndex bin_idx, bool suppress_m = false) const;
 
+
+    /// \brief Return an Ipv4Address that will resolve to a given bin index 
+    ///
+    /// \param  bin_idx     The Bin Index of the unicast or mcast destination
+    ///
+    /// \return  An Ipv4Address associated with the destination Bin Index
+    Ipv4Address GetViableDestAddr(BinIndex bin_idx)
+    {
+      if (IsMcastBinIndex(bin_idx))
+      {
+	return mcast_info_.GetViableDestAddr(bin_idx);
+      }
+      else if (IsUcastBinIndex(bin_idx))
+      {
+	return dst_info_.GetViableDestAddr(bin_idx);
+      }
+      return Ipv4Address((uint32_t)0);
+    }
+
     /// \brief  Print the internal state of the bin map.
     void Print() const;
 
@@ -857,6 +884,20 @@ namespace iron
       /// minus the starting Bin Index offset.
       Dst    ucast_dst_[kMaxNumDsts];
 
+      /// \brief Return an Ipv4Address that will resolve to the given bin index 
+      ///
+      /// \param   bin_idx     The Bin Index of the unicast or mcast destination
+      ///
+      /// \return  An Ipv4Address associated with the destination Bin Index
+      Ipv4Address GetViableDestAddr(BinIndex bin_idx)
+      {
+	if (ucast_dst_[bin_idx - offset_].num_subnets_ > 0)
+	{
+	  return ucast_dst_[bin_idx - offset_].subnet_[0].GetSubnetAddress();
+	}
+	return Ipv4Address((uint32_t)0);
+      }
+
     }; // end class DstInfo
 
     /// Stores information for all Interior Nodes.
@@ -1012,6 +1053,16 @@ namespace iron
       /// groups.
       bool               static_grp_[kMaxNumMcastGroups];
 
+      /// \brief Return an Ipv4Address that will resolve to the given bin index 
+      ///
+      /// \param   bin_idx     The Bin Index of the multicast destination
+      ///
+      /// \return  An Ipv4Address associated with the destination Bin Index
+      Ipv4Address GetViableDestAddr(BinIndex bin_idx)
+      {
+	return mcast_addr_[bin_idx - offset_];
+      }
+      
     }; // end class McastInfo
 
     /// True if and only if this instance has been initialized.

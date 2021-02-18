@@ -237,6 +237,7 @@ private:
   bool             rate_change_;
   bool             lat_sens_stream_[kMaxStreams];
   bool             limit_latency_;
+  bool             outlier_rejection_;
   string           direct_local_addr_;
   string           direct_remote_addr_;
   string           server_addr_;
@@ -767,6 +768,7 @@ TestApp::TestApp(PacketPool& packet_pool, Timer& timer)
       rate_change_(false),
       lat_sens_stream_(),
       limit_latency_(false),
+      outlier_rejection_(false),
       direct_local_addr_(),
       direct_remote_addr_(),
       server_addr_("0.0.0.0"),
@@ -789,7 +791,7 @@ TestApp::TestApp(PacketPool& packet_pool, Timer& timer)
 
   num_cc_alg_ = 1;
 
-  cc_algorithm_[0].SetCopa3();
+  cc_algorithm_[0].SetCopa();
 
   for (size_t i = 0; i < kMaxStreams; ++i)
   {
@@ -840,7 +842,7 @@ bool TestApp::Init(int argc, char** argv)
   LogC(kName, __func__, "Command: %s\n", cmd.c_str());
 
   // Parse the command line arguments.
-  while ((c = getopt(argc, argv, "C:a:j:D:p:R:s:l:Lqvdh")) != -1)
+  while ((c = getopt(argc, argv, "C:a:j:D:p:R:s:l:LOqvdh")) != -1)
   {
     switch (c)
     {
@@ -867,7 +869,7 @@ bool TestApp::Init(int argc, char** argv)
         anti_jitter = StringUtils::GetDouble(optarg, 1.0);
         if ((anti_jitter < 0.0) || (anti_jitter >= 1.0))
         {
-          LogE(kName, __func__, "Invalid Copa3 anti-jitter value: %s\n",
+          LogE(kName, __func__, "Invalid Copa anti-jitter value: %s\n",
                optarg);
           return false;
         }
@@ -911,6 +913,10 @@ bool TestApp::Init(int argc, char** argv)
         limit_latency_ = true;
         break;
 
+      case 'O':
+        outlier_rejection_ = true;
+        break;
+
       case 'q':
         Log::SetDefaultLevel("FEW");
         break;
@@ -945,14 +951,14 @@ bool TestApp::Init(int argc, char** argv)
 
   LogD(kName, __func__, "TestApp object is being initialized.\n");
 
-  // Set the Copa3 anti-jitter if specified.
+  // Set the Copa anti-jitter if specified.
   if (anti_jitter != 0.0)
   {
     for (size_t i = 0; i < num_cc_alg_; ++i)
     {
-      if (cc_algorithm_[i].algorithm == sliq::COPA3_CC)
+      if (cc_algorithm_[i].algorithm == sliq::COPA_CC)
       {
-        cc_algorithm_[i].copa3_anti_jitter = anti_jitter;
+        cc_algorithm_[i].copa_anti_jitter = anti_jitter;
       }
     }
   }
@@ -1300,6 +1306,15 @@ void TestApp::ProcessConnectionResult(EndptId endpt_id, bool success)
       {
         LogW(kName, __func__, "Unable to configure congestion control "
              "aggressiveness.\n");
+      }
+    }
+
+    // Set the RTT outlier rejection option if needed.
+    if (outlier_rejection_)
+    {
+      if (!ConfigureRttOutlierRejection(data_endpt_id_, true))
+      {
+        LogW(kName, __func__, "Unable to configure RTT outlier rejection.\n");
       }
     }
 
@@ -1784,13 +1799,13 @@ void TestApp::Usage(const char* prog_name)
   fprintf(stderr, "\n");
   fprintf(stderr, "Options:\n");
   fprintf(stderr, "  -C <cc>    The congestion control types to use (cubic, "
-          "copam, detcopam,\n             copa_<delta>, detcopa_<delta>, "
-          "copa2, copa3, gubic,\n             gubicpacing, reno, "
+          "copa1m, detcopa1m,\n             copa1_<delta>, detcopa1_<delta>, "
+          "copa2, copa, gubic,\n             gubicpacing, reno, "
           "renopacing, fixedrate_<bps>, none)\n             (default "
-          "copa3).\n");
+          "copa).\n");
   fprintf(stderr, "  -a <flws>  The congestion control aggressiveness in "
           "number of TCP flows\n             (default 1).\n");
-  fprintf(stderr, "  -j <sec>   The Copa3 congestion control anti-jitter "
+  fprintf(stderr, "  -j <sec>   The Copa congestion control anti-jitter "
           "setting in seconds\n             (default 0.0).\n");
   fprintf(stderr, "  -D <addr>  Direct connect using local,remote "
           "addresses.\n");
@@ -1803,6 +1818,7 @@ void TestApp::Usage(const char* prog_name)
           "streams.\n");
   fprintf(stderr, "  -L         Do not include start/end packets in latency "
           "measurements.\n");
+  fprintf(stderr, "  -O         Enable RTT outlier rejection.\n");
   fprintf(stderr, "  -q         Turn off logging.\n");
   fprintf(stderr, "  -v         Turn on verbose logging.\n");
   fprintf(stderr, "  -d         Turn on debug logging.\n");
@@ -1821,7 +1837,7 @@ void TestApp::Usage(const char* prog_name)
   fprintf(stderr, "  prio      The priority (0=highest, 7=lowest) (default "
           "3).\n");
   fprintf(stderr, "  rel       The reliability mode (beffort, rel_arq, "
-          "srel_arq[rx_lim],\n            srel_arqfec[rx_lim,tgt_rnds,"
+          "srel_arq[rx_lim],\n            srel_arqfec[rx_lim,del_lim,"
           "tgt_rcv_prob]) (default rel_arq).\n");
   fprintf(stderr, "  del       The delivery mode (ord, unord) (default "
           "ord).\n");
@@ -1866,21 +1882,21 @@ bool TestApp::ParseCongCtrlConfig(const char* cc_config)
 
     const char*  cc_tok = tok.c_str();
 
-    if (strncmp(cc_tok, "cubic", 5) == 0)
+    if (tok == "cubic")
     {
       cc_algorithm_[i].SetTcpCubic();
     }
-    else if (strncmp(cc_tok, "copam", 5) == 0)
+    else if (tok == "copa1m")
     {
-      cc_algorithm_[i].SetCopaM(false);
+      cc_algorithm_[i].SetCopaBeta1M(false);
     }
-    else if (strncmp(cc_tok, "detcopam", 8) == 0)
+    else if (tok == "detcopa1m")
     {
-      cc_algorithm_[i].SetCopaM(true);
+      cc_algorithm_[i].SetCopaBeta1M(true);
     }
-    else if (strncmp(cc_tok, "copa_", 5) == 0)
+    else if (strncmp(cc_tok, "copa1_", 6) == 0)
     {
-      const char*  beg_ptr = &(cc_tok[5]);
+      const char*  beg_ptr = &(cc_tok[6]);
       char*        end_ptr = NULL;
       double       delta   = strtod(beg_ptr, &end_ptr);
 
@@ -1890,11 +1906,11 @@ bool TestApp::ParseCongCtrlConfig(const char* cc_config)
         return false;
       }
 
-      cc_algorithm_[i].SetCopa(delta, false);
+      cc_algorithm_[i].SetCopaBeta1(delta, false);
     }
-    else if (strncmp(cc_tok, "detcopa_", 8) == 0)
+    else if (strncmp(cc_tok, "detcopa1_", 9) == 0)
     {
-      const char*  beg_ptr = &(cc_tok[8]);
+      const char*  beg_ptr = &(cc_tok[9]);
       char*        end_ptr = NULL;
       double       delta   = strtod(beg_ptr, &end_ptr);
 
@@ -1904,29 +1920,29 @@ bool TestApp::ParseCongCtrlConfig(const char* cc_config)
         return false;
       }
 
-      cc_algorithm_[i].SetCopa(delta, true);
+      cc_algorithm_[i].SetCopaBeta1(delta, true);
     }
-    else if (strncmp(cc_tok, "copa2", 5) == 0)
+    else if (tok == "copa2")
     {
-      cc_algorithm_[i].SetCopa2();
+      cc_algorithm_[i].SetCopaBeta2();
     }
-    else if (strncmp(cc_tok, "copa3", 5) == 0)
+    else if (tok == "copa")
     {
-      cc_algorithm_[i].SetCopa3();
+      cc_algorithm_[i].SetCopa();
     }
-    else if (strncmp(cc_tok, "gubicpacing", 11) == 0)
+    else if (tok == "gubicpacing")
     {
       cc_algorithm_[i].SetGoogleTcpCubic(true);
     }
-    else if (strncmp(cc_tok, "gubic", 5) == 0)
+    else if (tok == "gubic")
     {
       cc_algorithm_[i].SetGoogleTcpCubic(false);
     }
-    else if (strncmp(cc_tok, "renopacing", 10) == 0)
+    else if (tok == "renopacing")
     {
       cc_algorithm_[i].SetGoogleTcpReno(true);
     }
-    else if (strncmp(cc_tok, "reno", 4) == 0)
+    else if (tok == "reno")
     {
       cc_algorithm_[i].SetGoogleTcpReno(false);
     }
@@ -1945,7 +1961,7 @@ bool TestApp::ParseCongCtrlConfig(const char* cc_config)
 
       cc_algorithm_[i].SetFixedRate(rate);
     }
-    else if (strncmp(cc_tok, "none", 4) == 0)
+    else if (tok == "none")
     {
       cc_algorithm_[i].SetNoCc();
     }
@@ -2224,32 +2240,57 @@ bool TestApp::ParseStreamConfig(const char* stream_config)
       limit = static_cast<RexmitLimit>(val);
       if (!mix_val.Pop(tok))
       {
-        LogE(kName, __func__, "Semi-reliable ARQ/FEC target rounds "
+        LogE(kName, __func__, "Semi-reliable ARQ/FEC target delivery limit "
              "tokenization error.\n");
         return false;
       }
-      val = StringUtils::GetInt(tok, 0);
-      if ((val < 1) || (val > static_cast<int>(limit + 1)))
+      bool         use_rounds = false;
+      double       tgt_time   = 0.0;
+      RexmitLimit  tgt_rounds = 0;
+      if (tok.substr(tok.size() - 1, 1) == "s")
       {
-        LogE(kName, __func__, "Invalid semi-reliable ARQ/FEC target rounds: "
-             "%s\n", tok.c_str());
-        return false;
+        tgt_time = StringUtils::GetDouble(tok.substr(0, tok.size() - 1), -1.0);
+        if ((tgt_time < 0.001) || (tgt_time > 64.0))
+        {
+          LogE(kName, __func__, "Invalid semi-reliable ARQ/FEC target "
+               "delivery time limit in seconds: %s\n", tok.c_str());
+          return false;
+        }
+        use_rounds = false;
       }
-      RexmitLimit  tgt_rounds = static_cast<RexmitLimit>(val);
+      else
+      {
+        tgt_rounds = static_cast<RexmitLimit>(StringUtils::GetInt(tok, 0));
+        if ((tgt_rounds < 1) || (tgt_rounds > 7) ||
+            (tgt_rounds > static_cast<RexmitLimit>(limit + 1)))
+        {
+          LogE(kName, __func__, "Invalid semi-reliable ARQ/FEC target "
+               "delivery round limit: %s\n", tok.c_str());
+          return false;
+        }
+        use_rounds = true;
+      }
       if (!mix_val.Pop(tok))
       {
         LogE(kName, __func__, "Semi-reliable ARQ/FEC target receive "
              "probability tokenization error.\n");
         return false;
       }
-      double  rcv_p = StringUtils::GetDouble(tok, 1.0);
-      if ((rcv_p <= 0.0) || (rcv_p > 0.999))
+      double  rcv_p = StringUtils::GetDouble(tok, 0.0);
+      if ((rcv_p < 0.95) || (rcv_p > 0.999))
       {
         LogE(kName, __func__, "Invalid semi-reliable ARQ/FEC target receive "
              "probability: %s\n", tok.c_str());
         return false;
       }
-      rel.SetSemiRelArqFecUsingRounds(limit, rcv_p, tgt_rounds);
+      if (use_rounds)
+      {
+        rel.SetSemiRelArqFecUsingRounds(limit, rcv_p, tgt_rounds);
+      }
+      else
+      {
+        rel.SetSemiRelArqFecUsingTime(limit, rcv_p, tgt_time);
+      }
     }
     else if (tok == "beffort")
     {

@@ -45,7 +45,7 @@
 
 using ::sliq::Capacity;
 using ::sliq::CongCtrlAlg;
-using ::sliq::Copa3;
+using ::sliq::Copa;
 using ::sliq::PktSeqNumber;
 using ::iron::CallbackNoArg;
 using ::iron::Log;
@@ -58,7 +58,7 @@ using ::iron::Timer;
 namespace
 {
   /// The class name string for logging.
-  const char*   kClassName           = "Copa3";
+  const char*   kClassName           = "Copa";
 
   /// The smoothed RTT alpha parameter.
   const double  kSrttAlpha           = (1.0 / 16.0);
@@ -137,20 +137,20 @@ namespace
 
 
 //============================================================================
-Copa3::FastStartup::FastStartup()
+Copa::FastStartup::FastStartup()
     : pairs_sent_(0), pair_send_time_(), pair_recv_time_(), rtt_(), rate_(),
       timer_()
 {
 }
 
 //============================================================================
-Copa3::FastStartup::~FastStartup()
+Copa::FastStartup::~FastStartup()
 {
   return;
 }
 
 //============================================================================
-void Copa3::FastStartup::Clear()
+void Copa::FastStartup::Clear()
 {
   pairs_sent_ = 0;
 
@@ -164,20 +164,20 @@ void Copa3::FastStartup::Clear()
 }
 
 //============================================================================
-Copa3::DelayBin::DelayBin()
+Copa::DelayBin::DelayBin()
     : min_delay_(kHugeRtt), obs_time_()
 {
   return;
 }
 
 //============================================================================
-Copa3::DelayBin::~DelayBin()
+Copa::DelayBin::~DelayBin()
 {
   return;
 }
 
 //============================================================================
-Copa3::DelayTracker::DelayTracker()
+Copa::DelayTracker::DelayTracker()
     : recent_min_delay_(kHugeRtt), recent_obs_time_(), bin_(), count_(0),
       next_index_(0), prev_time_()
 {
@@ -185,14 +185,14 @@ Copa3::DelayTracker::DelayTracker()
 }
 
 //============================================================================
-Copa3::DelayTracker::~DelayTracker()
+Copa::DelayTracker::~DelayTracker()
 {
   return;
 }
 
 //============================================================================
-void Copa3::DelayTracker::Update(double delay, const Time& now,
-                                 double win_sec, double& result)
+void Copa::DelayTracker::Update(double delay, const Time& now,
+                                double win_sec, double& result)
 {
   // Update the recent minimum delay observed.
   if (delay < recent_min_delay_)
@@ -265,8 +265,8 @@ void Copa3::DelayTracker::Update(double delay, const Time& now,
 }
 
 //============================================================================
-Copa3::VelocityState::VelocityState(PktSeqNumber initial_cc_seq_num,
-                                    double initial_cwnd)
+Copa::VelocityState::VelocityState(PktSeqNumber initial_cc_seq_num,
+                                   double initial_cwnd)
     : prev_direction_(VEL_DIR_NEITHER), same_direction_cnt_(0),
       start_cc_seq_num_(initial_cc_seq_num), start_cwnd_(initial_cwnd),
       start_cwnd_increasing_(true)
@@ -275,15 +275,15 @@ Copa3::VelocityState::VelocityState(PktSeqNumber initial_cc_seq_num,
 }
 
 //============================================================================
-Copa3::VelocityState::~VelocityState()
+Copa::VelocityState::~VelocityState()
 {
   return;
 }
 
 //============================================================================
-void Copa3::VelocityState::Update(PktSeqNumber next_cc_seq_num,
-                                  double current_cwnd, bool cwnd_increasing,
-                                  uint32_t& result_velocity)
+void Copa::VelocityState::Update(PktSeqNumber next_cc_seq_num,
+                                 double current_cwnd, bool cwnd_increasing,
+                                 uint32_t& result_velocity)
 {
   VelDir  dir = VEL_DIR_NEITHER;
 
@@ -326,9 +326,9 @@ void Copa3::VelocityState::Update(PktSeqNumber next_cc_seq_num,
 }
 
 //============================================================================
-void Copa3::VelocityState::Reset(PktSeqNumber next_cc_seq_num,
-                                 double current_cwnd, bool cwnd_increasing,
-                                 uint32_t& result_velocity)
+void Copa::VelocityState::Reset(PktSeqNumber next_cc_seq_num,
+                                double current_cwnd, bool cwnd_increasing,
+                                uint32_t& result_velocity)
 {
   prev_direction_        = VEL_DIR_NEITHER;
   same_direction_cnt_    = 0;
@@ -339,21 +339,21 @@ void Copa3::VelocityState::Reset(PktSeqNumber next_cc_seq_num,
 }
 
 //============================================================================
-Copa3::Damper::Damper()
+Copa::Damper::Damper()
     : state_(DAMPER_MONITOR_HIGH), hold_cnt_(0)
 {
   return;
 }
 
 //============================================================================
-Copa3::Damper::~Damper()
+Copa::Damper::~Damper()
 {
   return;
 }
 
 //============================================================================
-bool Copa3::Damper::OnRttUpdate(double queueing_delay, double ist,
-                                double delta)
+bool Copa::Damper::OnRttUpdate(double queueing_delay, double ist,
+                               double delta)
 {
   bool  rv = false;
 
@@ -381,7 +381,7 @@ bool Copa3::Damper::OnRttUpdate(double queueing_delay, double ist,
 }
 
 //============================================================================
-void Copa3::Damper::OnPktSend(double cwnd)
+void Copa::Damper::OnPktSend(double cwnd)
 {
   // Check if the damper state should be updated.
   if ((state_ == DAMPER_HOLD) || (state_ == DAMPER_WAIT))
@@ -405,15 +405,15 @@ void Copa3::Damper::OnPktSend(double cwnd)
 }
 
 //============================================================================
-void Copa3::Damper::Reset()
+void Copa::Damper::Reset()
 {
   state_    = DAMPER_MONITOR_HIGH;
   hold_cnt_ = 0;
 }
 
 //============================================================================
-Copa3::Copa3(EndptId conn_id, bool is_client, CcId cc_id, Connection& conn,
-             Framer& framer, PacketPool& pkt_pool, Timer& timer)
+Copa::Copa(EndptId conn_id, bool is_client, CcId cc_id, Connection& conn,
+           Framer& framer, PacketPool& pkt_pool, Timer& timer)
     : CongCtrlInterface(conn_id, is_client),
       cc_id_(cc_id),
       conn_(conn),
@@ -461,23 +461,23 @@ Copa3::Copa3(EndptId conn_id, bool is_client, CcId cc_id, Connection& conn,
 }
 
 //============================================================================
-Copa3::~Copa3()
+Copa::~Copa()
 {
   // Cancel all of the timers.
   timer_.CancelTimer(fs_.timer_);
 
   // Clean up the timer callback object pools.
-  CallbackNoArg<Copa3>::EmptyPool();
+  CallbackNoArg<Copa>::EmptyPool();
 }
 
 //============================================================================
-bool Copa3::Configure(const CongCtrl& cc_params)
+bool Copa::Configure(const CongCtrl& cc_params)
 {
-  if (cc_params.copa3_anti_jitter > 0.0)
+  if (cc_params.copa_anti_jitter > 0.0)
   {
-    anti_jitter_ = cc_params.copa3_anti_jitter;
+    anti_jitter_ = cc_params.copa_anti_jitter;
 
-    LogC(kClassName, __func__, "Conn %" PRIEndptId ": Setting Copa3 "
+    LogC(kClassName, __func__, "Conn %" PRIEndptId ": Setting Copa "
          "anti-jitter to %f.\n", conn_id_, anti_jitter_);
   }
 
@@ -485,7 +485,7 @@ bool Copa3::Configure(const CongCtrl& cc_params)
 }
 
 //============================================================================
-void Copa3::Connected(const Time& /* now */, const Time& rtt)
+void Copa::Connected(const Time& /* now */, const Time& rtt)
 {
   if (state_ != NOT_CONNECTED)
   {
@@ -523,53 +523,53 @@ void Copa3::Connected(const Time& /* now */, const Time& rtt)
 }
 
 //============================================================================
-bool Copa3::UseRexmitPacing()
+bool Copa::UseRexmitPacing()
 {
   return true;
 }
 
 //============================================================================
-bool Copa3::UseCongWinForCapEst()
+bool Copa::UseCongWinForCapEst()
 {
   return true;
 }
 
 //============================================================================
-bool Copa3::UseUnaPktReporting()
+bool Copa::UseUnaPktReporting()
 {
   return false;
 }
 
 //============================================================================
-bool Copa3::SetTcpFriendliness(uint32_t /* num_flows */)
+bool Copa::SetTcpFriendliness(uint32_t /* num_flows */)
 {
   return true;
 }
 
 //============================================================================
-bool Copa3::ActivateStream(StreamId /* stream_id */,
-                           PktSeqNumber /* init_send_seq_num */)
+bool Copa::ActivateStream(StreamId /* stream_id */,
+                          PktSeqNumber /* init_send_seq_num */)
 {
   return true;
 }
 
 //============================================================================
-bool Copa3::DeactivateStream(StreamId /* stream_id */)
+bool Copa::DeactivateStream(StreamId /* stream_id */)
 {
   return true;
 }
 
 //============================================================================
-void Copa3::OnAckPktProcessingStart(const Time& /* ack_time */)
+void Copa::OnAckPktProcessingStart(const Time& /* ack_time */)
 {
   return;
 }
 
 //============================================================================
-void Copa3::OnRttUpdate(StreamId stream_id, const Time& ack_time,
-                        PktTimestamp send_ts, PktTimestamp recv_ts,
-                        PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
-                        const Time& rtt, uint32_t bytes, float cc_val)
+void Copa::OnRttUpdate(StreamId stream_id, const Time& ack_time,
+                       PktTimestamp send_ts, PktTimestamp recv_ts,
+                       PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
+                       const Time& rtt, uint32_t bytes, float cc_val)
 {
   if (state_ < SLOW_START)
   {
@@ -831,7 +831,7 @@ void Copa3::OnRttUpdate(StreamId stream_id, const Time& ack_time,
        "lambda_target=%f lambda=%f cwnd=%f ist=%f\n", conn_id_, adjusted_rtt,
        smoothed_rtt_, standing_rtt_, min_rtt_, queueing_delay, lambda_target,
        lambda, cwnd_, ist_);
-  LogA(kClassName, __func__, "Conn %" PRIEndptId ": PLT_COPA3 %f %f %f %f %f "
+  LogA(kClassName, __func__, "Conn %" PRIEndptId ": PLT_COPA %f %f %f %f %f "
        "%f %f %f %" PRIu32 " %f %0.9f %f %f %f\n", conn_id_,
        CurrentTime(ack_time), adjusted_rtt, smoothed_rtt_, standing_rtt_,
        min_rtt_, queueing_delay, lambda_target, lambda, velocity_, cwnd_,
@@ -842,33 +842,33 @@ void Copa3::OnRttUpdate(StreamId stream_id, const Time& ack_time,
 }
 
 //============================================================================
-bool Copa3::OnPacketLost(StreamId /* stream_id */, const Time& /* ack_time */,
-                         PktSeqNumber /* seq_num */,
-                         PktSeqNumber /* cc_seq_num */, uint32_t /* bytes */)
+bool Copa::OnPacketLost(StreamId /* stream_id */, const Time& /* ack_time */,
+                        PktSeqNumber /* seq_num */,
+                        PktSeqNumber /* cc_seq_num */, uint32_t /* bytes */)
 {
   return true;
 }
 
 //============================================================================
-void Copa3::OnPacketAcked(StreamId /* stream_id */,
-                          const Time& /* ack_time */,
-                          PktSeqNumber /* seq_num */,
-                          PktSeqNumber /* cc_seq_num */,
-                          PktSeqNumber /* ne_seq_num */, uint32_t /* bytes */)
+void Copa::OnPacketAcked(StreamId /* stream_id */,
+                         const Time& /* ack_time */,
+                         PktSeqNumber /* seq_num */,
+                         PktSeqNumber /* cc_seq_num */,
+                         PktSeqNumber /* ne_seq_num */, uint32_t /* bytes */)
 {
   return;
 }
 
 //============================================================================
-void Copa3::OnAckPktProcessingDone(const Time& /* ack_time */)
+void Copa::OnAckPktProcessingDone(const Time& /* ack_time */)
 {
   return;
 }
 
 //============================================================================
-PktSeqNumber Copa3::OnPacketSent(StreamId stream_id, const Time& send_time,
-                                 PktSeqNumber seq_num, uint32_t pld_bytes,
-                                 uint32_t /* tot_bytes */, float& cc_val)
+PktSeqNumber Copa::OnPacketSent(StreamId stream_id, const Time& send_time,
+                                PktSeqNumber seq_num, uint32_t pld_bytes,
+                                uint32_t /* tot_bytes */, float& cc_val)
 {
   // Assign a CC sequence number to the packet.
   PktSeqNumber  cc_seq_num = nxt_cc_seq_num_;
@@ -895,10 +895,10 @@ PktSeqNumber Copa3::OnPacketSent(StreamId stream_id, const Time& send_time,
 }
 
 //============================================================================
-void Copa3::OnPacketResent(StreamId stream_id, const Time& send_time,
-                           PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
-                           uint32_t pld_bytes, uint32_t /* tot_bytes */,
-                           bool rto, bool orig_cc, float& cc_val)
+void Copa::OnPacketResent(StreamId stream_id, const Time& send_time,
+                          PktSeqNumber seq_num, PktSeqNumber cc_seq_num,
+                          uint32_t pld_bytes, uint32_t /* tot_bytes */,
+                          bool rto, bool orig_cc, float& cc_val)
 {
 #ifdef SLIQ_CC_DEBUG
   LogD(kClassName, __func__, "** Conn %" PRIEndptId ": On Resend: stream=%"
@@ -923,20 +923,20 @@ void Copa3::OnPacketResent(StreamId stream_id, const Time& send_time,
 }
 
 //============================================================================
-bool Copa3::RequireFastRto()
+bool Copa::RequireFastRto()
 {
   // If the congestion window size is too small, then use fast RTOs.
   return (cwnd_ < kFastRtoCwndThres);
 }
 
 //============================================================================
-void Copa3::OnRto(bool /* pkt_rexmit */)
+void Copa::OnRto(bool /* pkt_rexmit */)
 {
   return;
 }
 
 //============================================================================
-void Copa3::OnOutageEnd()
+void Copa::OnOutageEnd()
 {
 #ifdef SLIQ_CC_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId ": Outage is over.\n",
@@ -947,7 +947,7 @@ void Copa3::OnOutageEnd()
 }
 
 //============================================================================
-bool Copa3::CanSend(const Time& /* now */, uint32_t /* bytes */)
+bool Copa::CanSend(const Time& /* now */, uint32_t /* bytes */)
 {
   // If the congestion window size is greater than the number of bytes in
   // flight, then the sender is not congestion control blocked.
@@ -957,15 +957,15 @@ bool Copa3::CanSend(const Time& /* now */, uint32_t /* bytes */)
 }
 
 //============================================================================
-bool Copa3::CanResend(const Time& /* now */, uint32_t /* bytes */,
-                      bool /* orig_cc */)
+bool Copa::CanResend(const Time& /* now */, uint32_t /* bytes */,
+                     bool /* orig_cc */)
 {
-  // Copa3 paces fast retransmissions, so this can just return true.
+  // Copa paces fast retransmissions, so this can just return true.
   return true;
 }
 
 //============================================================================
-Time Copa3::TimeUntilSend(const Time& now)
+Time Copa::TimeUntilSend(const Time& now)
 {
   // Check if the send can happen immediately.
   if (now.Add(timer_tolerance_) >= next_send_time_)
@@ -978,27 +978,27 @@ Time Copa3::TimeUntilSend(const Time& now)
 }
 
 //============================================================================
-Capacity Copa3::PacingRate()
+Capacity Copa::SendPacingRate()
 {
   double  pacing_rate_bps = (((kNominalPktSizeBytes + kPktOverheadBytes) *
                               8.0) / ist_);
 
 #ifdef SLIQ_CC_DEBUG
-  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Pacing rate %f bps.\n",
-       conn_id_, pacing_rate_bps);
+  LogD(kClassName, __func__, "Conn %" PRIEndptId ": Send pacing rate %f "
+       "bps.\n", conn_id_, pacing_rate_bps);
 #endif
 
   return static_cast<Capacity>(pacing_rate_bps);
 }
 
 //============================================================================
-Capacity Copa3::CapacityEstimate()
+Capacity Copa::SendRate()
 {
-  return PacingRate();
+  return SendPacingRate();
 }
 
 //============================================================================
-bool Copa3::GetSyncParams(uint16_t& seq_num, uint32_t& cc_params)
+bool Copa::GetSyncParams(uint16_t& seq_num, uint32_t& cc_params)
 {
   if (report_min_rtt_)
   {
@@ -1022,8 +1022,8 @@ bool Copa3::GetSyncParams(uint16_t& seq_num, uint32_t& cc_params)
 }
 
 //============================================================================
-void Copa3::ProcessSyncParams(const Time& now, uint16_t seq_num,
-                              uint32_t cc_params)
+void Copa::ProcessSyncParams(const Time& now, uint16_t seq_num,
+                             uint32_t cc_params)
 {
   if ((cc_params != 0) && CC_SYNC_SEQ_NUM_OK(seq_num, sync_recv_seq_num_))
   {
@@ -1053,7 +1053,7 @@ void Copa3::ProcessSyncParams(const Time& now, uint16_t seq_num,
 }
 
 //============================================================================
-void Copa3::ProcessCcPktTrain(const Time& now, CcPktTrainHeader& hdr)
+void Copa::ProcessCcPktTrain(const Time& now, CcPktTrainHeader& hdr)
 {
   uint32_t  pair = (hdr.pt_seq_num / 2);
 
@@ -1109,7 +1109,7 @@ void Copa3::ProcessCcPktTrain(const Time& now, CcPktTrainHeader& hdr)
        "FS_ACK with seq=%" PRIu8 ".\n", conn_id_, hdr.pt_seq_num);
 #endif
 
-  // Copa3 must be in the fast startup state to process the FS_ACK packet.
+  // Copa must be in the fast startup state to process the FS_ACK packet.
   if (state_ != FAST_STARTUP)
   {
     // It is possible for an FS_ACK packet to arrive late.  Thus, if we are in
@@ -1167,53 +1167,53 @@ void Copa3::ProcessCcPktTrain(const Time& now, CcPktTrainHeader& hdr)
 }
 
 //============================================================================
-bool Copa3::InSlowStart()
+bool Copa::InSlowStart()
 {
   // Consider any state other than CLOSED_LOOP as slow start.
   return (state_ != CLOSED_LOOP);
 }
 
 //============================================================================
-bool Copa3::InRecovery()
+bool Copa::InRecovery()
 {
-  // There is no fast recovery in Copa3.
+  // There is no fast recovery in Copa.
   return false;
 }
 
 //============================================================================
-uint32_t Copa3::GetCongestionWindow()
+uint32_t Copa::GetCongestionWindow()
 {
   // Convert the congestion window size from packets to bytes.
   return (cwnd_ * (kNominalPktSizeBytes - kDataHdrBaseSize));
 }
 
 //============================================================================
-uint32_t Copa3::GetSlowStartThreshold()
+uint32_t Copa::GetSlowStartThreshold()
 {
-  // There is no slow start threshold in Copa3.
+  // There is no slow start threshold in Copa.
   return 0;
 }
 
 //============================================================================
-CongCtrlAlg Copa3::GetCongestionControlType()
+CongCtrlAlg Copa::GetCongestionControlType()
 {
-  return COPA3_CC;
+  return COPA_CC;
 }
 
 //============================================================================
-void Copa3::Close()
+void Copa::Close()
 {
   return;
 }
 
 //============================================================================
-double Copa3::CurrentTime(const Time& now)
+double Copa::CurrentTime(const Time& now)
 {
   return ((now - start_time_point_).ToDouble());
 }
 
 //============================================================================
-void Copa3::UpdateNextSendTime(const Time& now, size_t bytes)
+void Copa::UpdateNextSendTime(const Time& now, size_t bytes)
 {
   // Update the next send time using the packet size and the stored next send
   // time.  This maintains inter-send time accuracy.
@@ -1243,7 +1243,7 @@ void Copa3::UpdateNextSendTime(const Time& now, size_t bytes)
 }
 
 //============================================================================
-void Copa3::ReportMinRttOnUpdate()
+void Copa::ReportMinRttOnUpdate()
 {
   // Report the new local minimum RTT to the peer if the new encoded value is
   // different than the last reported encoded value.  The encoded value is the
@@ -1280,7 +1280,7 @@ void Copa3::ReportMinRttOnUpdate()
 }
 
 //============================================================================
-void Copa3::ReportMinRttOnTimeout(const Time& now)
+void Copa::ReportMinRttOnTimeout(const Time& now)
 {
   // The encoded value is the local minimum RTT to the nearest 100
   // microseconds.
@@ -1306,10 +1306,10 @@ void Copa3::ReportMinRttOnTimeout(const Time& now)
 }
 
 //============================================================================
-void Copa3::SendPktPair(uint8_t first_seq)
+void Copa::SendPktPair(uint8_t first_seq)
 {
   // Send two congestion control packet train FS_DATA packets, each having a
-  // length equal to the Copa3 nominal data packet size, as fast as possible.
+  // length equal to the Copa nominal data packet size, as fast as possible.
   size_t  payload_len = (kNominalPktSizeBytes - kCcPktTrainHdrSize);
 
   if (!conn_.SendCcPktTrainPkts(cc_id_, FS_DATA, first_seq, 0, payload_len,
@@ -1329,7 +1329,7 @@ void Copa3::SendPktPair(uint8_t first_seq)
 }
 
 //============================================================================
-void Copa3::SendPktPairAck(uint8_t seq, uint32_t irt_usec)
+void Copa::SendPktPairAck(uint8_t seq, uint32_t irt_usec)
 {
   // Send a congestion control packet train FS_ACK packet.
   if (!conn_.SendCcPktTrainPkts(cc_id_, FS_ACK, seq, irt_usec, 0, 1))
@@ -1347,7 +1347,7 @@ void Copa3::SendPktPairAck(uint8_t seq, uint32_t irt_usec)
 }
 
 //============================================================================
-void Copa3::FsPktPairCallback()
+void Copa::FsPktPairCallback()
 {
   if (state_ != FAST_STARTUP)
   {
@@ -1367,9 +1367,9 @@ void Copa3::FsPktPairCallback()
   if (fs_.pairs_sent_ < kNumFsPairs)
   {
     // Start the next timer to send kNumFsPairs packet pairs over 2 RTTs.
-    Time                  duration((2.0 * (smoothed_rtt_ + kPktPairRttAdj)) /
-                                   static_cast<double>(kNumFsPairs));
-    CallbackNoArg<Copa3>  callback(this, &Copa3::FsPktPairCallback);
+    Time                 duration((2.0 * (smoothed_rtt_ + kPktPairRttAdj)) /
+                                  static_cast<double>(kNumFsPairs));
+    CallbackNoArg<Copa>  callback(this, &Copa::FsPktPairCallback);
 
     if (!timer_.StartTimer(duration, &callback, fs_.timer_))
     {
@@ -1389,8 +1389,8 @@ void Copa3::FsPktPairCallback()
       wait_time = 1.0;
     }
 
-    Time                  duration(wait_time);
-    CallbackNoArg<Copa3>  callback(this, &Copa3::FsDoneCallback);
+    Time                 duration(wait_time);
+    CallbackNoArg<Copa>  callback(this, &Copa::FsDoneCallback);
 
     if (!timer_.StartTimer(duration, &callback, fs_.timer_))
     {
@@ -1401,7 +1401,7 @@ void Copa3::FsPktPairCallback()
 }
 
 //============================================================================
-void Copa3::FsDoneCallback()
+void Copa::FsDoneCallback()
 {
   if (state_ != FAST_STARTUP)
   {

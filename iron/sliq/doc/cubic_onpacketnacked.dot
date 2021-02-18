@@ -5,18 +5,12 @@ digraph sliq_cubic_onpacketnacked {
     blk3 [ shape = box,     label = "Return true\n(packet considered lost)" ];
     dsc1 [ shape = diamond, label = "Is in_fr == true?" ];
     dsc2 [ shape = diamond, label = "Is seq num in FR window?" ];
-    dsc3 [ shape = diamond, label = "Is packet NACK count < 3?" ];
-    dsc4 [ shape = diamond, label = "Is packet NACK count < 3?" ];
 
-    redy -> dsc1 [ label = "OnPacketNacked" ];
+    redy -> dsc1 [ label = "OnPacketLost" ];
     dsc1 -> dsc2 [ label = "Yes" ];
-    dsc1 -> dsc4 [ label = "No" ];
-    dsc2 -> dsc3 [ label = "Yes" ];
+    dsc1 -> blk1 [ label = "No" ];
+    dsc2 -> blk3 [ label = "Yes" ];
     dsc2 -> blk2 [ label = "No" ];
-    dsc3 -> blk2 [ label = "Yes" ];
-    dsc3 -> blk3 [ label = "No" ];
-    dsc4 -> blk2 [ label = "Yes" ];
-    dsc4 -> blk1 [ label = "No" ];
     blk1 -> blk3;
     blk2 -> redy;
     blk3 -> redy;

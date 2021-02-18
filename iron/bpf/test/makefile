@@ -132,14 +132,14 @@ EXE_NAME = testironbpf
 #
 # Define source code associated with executable (e.g. EXESRC1.c EXESRC2.cc).
 #
-EXE_SOURCE = bpf_cppunit_main.cc \
-             bpf_broadcast_test.cc \
+EXE_SOURCE = bpf_broadcast_test.cc \
+             bpf_cppunit_main.cc \
              bpf_ls_test.cc \
              bpf_sond_test.cc \
              bpf_stats_test.cc \
-             bpf_uber_alg_test.cc \
              queue_set_test.cc
 
+#             bpf_dequeue_alg_test.cc \
 #             bpf_hvyball_test.cc \
 
 #

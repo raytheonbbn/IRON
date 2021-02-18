@@ -725,6 +725,37 @@ McastId BinMap::GetMcastId(BinIndex bin_idx) const
 }
 
 //============================================================================
+BinIndex BinMap::AddMcastGroup(const Ipv4Address& mcast_addr)
+{
+  // Get the Multicast ID.
+  McastId  mcast_id = GetMcastIdFromAddress(mcast_addr);
+
+  // Look for the multicast group.
+  BinIndex  mcast_bin_idx = mcast_info_.FindMcastGrp(mcast_id);
+  if (mcast_bin_idx != kInvalidBinIndex)
+  {
+    LogW(kClassName, __func__, "Multicast group %s already in BinMap.\n",
+         mcast_addr.ToString().c_str());
+    return mcast_bin_idx;
+  }
+
+  DstVec  dst_vec = 0;
+  if (!mcast_info_.AddMcastGrp(mcast_addr, mcast_id, dst_vec, false,
+                               mcast_bin_idx))
+  {
+    LogE(kClassName, __func__, "Error, unable to add multicast group %s.\n",
+         mcast_addr.ToString().c_str());
+    return kInvalidBinIndex;
+  }
+
+  LogI(kClassName, __func__, "Added new dynamic multicast group for %s with "
+       "Multicast ID %" PRIMcastId " (Bin Index %" PRIBinIndex ").\n",
+       mcast_addr.ToString().c_str(), mcast_id, mcast_bin_idx);
+
+  return mcast_bin_idx;
+}
+
+//============================================================================
 void BinMap::AddDstToMcastGroup(const Ipv4Address& mcast_addr,
                                 BinIndex dst_bin_idx)
 {

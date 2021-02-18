@@ -1,10 +1,10 @@
 digraph sliq_data_send {
     strt [ shape = ellipse, label = "Start" ];
     blk1 [ shape = box,     label = "Do Delayed Data Send state machine" ];
-    blk2 [ shape = box,     label = "Create data pkt for data\nAssign seq num to data pkt\nSet data pkt blocked flag as necessary\nSend data pkt\nIf RTO timer is not started, start RTO timer with RTO duration\nAdd data pkt to send window\nReturn success" ];
+    blk2 [ shape = box,     label = "Create data pkt for data\nAssign seq num to data pkt\nIf lat-sens data, add TTG to data\npkt adjusted for hold time\nDo FEC Data Send state machine\nSend data pkt\nIf RTO timer is not started, start\nRTO timer with RTO duration\nAdd data pkt to send window\nReturn success" ];
     blk3 [ shape = box,     label = "Add data to xmit queue\nReturn success" ];
     blk4 [ shape = box,     label = "Return failure" ];
-    dsc1 [ shape = diamond, label = "Is xmit queue not empty OR\nis flow control blocked OR\nis congestion control blocked?" ];
+    dsc1 [ shape = diamond, label = "Is orig FEC enc pkt\nqueue not empty OR\nis xmit queue not empty OR\nis flow control blocked OR\nis congestion control blocked?" ];
     dsc2 [ shape = diamond, label = "Is xmit\nqueue full?" ];
 
     strt -> blk1 [ label = "App calls Send() with data" ];

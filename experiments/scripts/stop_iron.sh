@@ -191,6 +191,11 @@ else
     echo "not started" > ${RES_FILE}
 fi
 
+# Stop mgms before amp.
+echo "killing proc: mgms"
+sudo pkill -u root -SIGINT -f "mgms"
+sleep 1
+
 # amp is always supposed to run
 BIN=amp
 RES_FILE=${LOG_DIR}/${BIN}-endcheck.log

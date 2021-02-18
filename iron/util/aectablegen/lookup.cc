@@ -44,7 +44,6 @@
 #include "setupDofLookupTables.h"
 
 #include "doflutparms.h"
-//#include "altdoflutparms.h"
 
 int
 main (int argc, char**argv)
@@ -65,6 +64,12 @@ main (int argc, char**argv)
   double ***state_prob             = NULL;
   int    **penultimate_state_count = NULL;
   int    **final_state_count       = NULL;
+
+  // Make sure we're in bounds for the table lookups
+  if (nSrcPkts > MAXSRCPKTS)
+  {
+    nSrcPkts = MAXSRCPKTS;
+  }
 
   // This lut is used for all but the last round
   // and is indexed as nRcvd, kRcvd

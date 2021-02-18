@@ -35,25 +35,6 @@
  */
 /* IRON: end */
 
-//============================================================================
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-//============================================================================
-
 #include "sliq_received_packet_manager.h"
 
 #include "sliq_connection.h"
@@ -66,7 +47,7 @@
 #include <inttypes.h>
 
 
-using ::sliq::FecBlock;
+using ::sliq::FecSize;
 using ::sliq::PktSeqNumber;
 using ::sliq::RcvdPktManager;
 using ::sliq::VdmFec;
@@ -100,12 +81,9 @@ namespace
   /// delivered to the application.
   const uint8_t       kDelivered         = 0x10;
 
-  /// The number of FEC source packets in each FEC block (coding K value).
-  const FecBlock      kFecK              = 10;
-
-  /// The number of FEC groups supported for storing FEC information.
-  const WindowSize    kFecGroupInfoSize  = ((sliq::kFlowCtrlWindowPkts /
-                                             kFecK) + 3);
+  /// The number of FEC groups supported for storing FEC information.  The
+  /// worst case occurs when there is only one packet in each FEC group.
+  const WindowSize    kFecGroupInfoSize  = sliq::kFlowCtrlWindowPkts;
 
   /// The SLIQ latency-sensitive data packet overhead to use in the raw
   /// goodput statistics.  Includes the Ethernet header size (14 bytes), IPv4
@@ -232,14 +210,18 @@ bool RcvdPktManager::Initialize(
   // Initialize the FEC encoder.
   if (rel.mode == SEMI_RELIABLE_ARQ_FEC)
   {
-    // \todo This currently only handles the FEC target packet delivery limit
-    // specified as some number of rounds.  Add support for time values.
-    if (rel_.fec_del_time_flag)
+    if (!rel.fec_del_time_flag)
     {
-      LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-           ": Error, no support for FEC target packet delivery time.\n",
-           conn_id_, stream_id_);
-      return false;
+      // Check that the target number of rounds is within limits.
+      if ((rel.fec_target_pkt_del_rounds < 1) ||
+          (rel.fec_target_pkt_del_rounds > kMaxTgtPktDelRnds))
+      {
+        LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
+             ": Error, FEC target number of rounds %" PRIRexmitRounds
+             " exceeds limits of 1 to %zu.\n", conn_id_, stream_id_,
+             rel.fec_target_pkt_del_rounds, kMaxTgtPktDelRnds);
+        return false;
+      }
     }
 
     VdmFec::Initialize();
@@ -252,7 +234,7 @@ bool RcvdPktManager::Initialize(
   if (rel.mode == SEMI_RELIABLE_ARQ_FEC)
   {
     fec_grp_info_ = new (std::nothrow) FecGroupInfo[kFecGroupInfoSize];
-    fec_src_pkts_ = new (std::nothrow) RcvdPktInfo[kMaxFecBlockLengthPkts];
+    fec_src_pkts_ = new (std::nothrow) RcvdPktInfo[kMaxFecGroupLengthPkts];
 
     if ((fec_grp_info_ == NULL) || (fec_src_pkts_ == NULL))
     {
@@ -286,10 +268,15 @@ bool RcvdPktManager::Initialize(
 
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-       ": Initialize receive packet manager: del_mode %d rcv_wnd_ %"
-       PRIWindowSize " rcv_min_ %" PRIPktSeqNumber " rcv_nxt_ %"
-       PRIPktSeqNumber " rcv_max_ %" PRIPktSeqNumber ".\n", conn_id_,
-       stream_id_, del_mode_, rcv_wnd_, rcv_min_, rcv_nxt_, rcv_max_);
+       ": Initialize receive packet manager: rel_mode %d rexmit_limit %"
+       PRIRexmitLimit " del_time %d tgt_rnds %" PRIFecRound " tgt_time %f "
+       "tgt_prob %f del_mode %d rcv_wnd_ %" PRIWindowSize " rcv_min_ %"
+       PRIPktSeqNumber " rcv_nxt_ %" PRIPktSeqNumber " rcv_max_ %"
+       PRIPktSeqNumber ".\n", conn_id_, stream_id_, rel_.mode,
+       rel_.rexmit_limit, static_cast<int>(rel_.fec_del_time_flag),
+       rel_.fec_target_pkt_del_rounds, rel_.fec_target_pkt_del_time_sec,
+       rel_.fec_target_pkt_recv_prob, del_mode_, rcv_wnd_, rcv_min_, rcv_nxt_,
+       rcv_max_);
 #endif
 
   return true;
@@ -345,9 +332,9 @@ bool RcvdPktManager::AddPkt(DataHeader& pkt, const Time& rcv_time)
     {
       LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
            ": Redundant packet, received seq %" PRIPktSeqNumber " grp %"
-           PRIFecGroupId " idx %" PRIFecBlock " precedes the current window."
+           PRIFecGroupId " idx %" PRIFecSize " precedes the current window."
            "\n", conn_id_, stream_id_, pkt.sequence_number, pkt.fec_group_id,
-           pkt.fec_block_index);
+           pkt.fec_group_index);
     }
     else
     {
@@ -371,8 +358,12 @@ bool RcvdPktManager::AddPkt(DataHeader& pkt, const Time& rcv_time)
     // Update the packet receive statistics for this redundant FEC packet.
     if ((pkt.fec_flag) && (rel_.mode == SEMI_RELIABLE_ARQ_FEC) &&
         (pkt.fec_round > 0) &&
-        (pkt.fec_round <= rel_.fec_target_pkt_del_rounds))
+        (((rel_.fec_del_time_flag) && (pkt.fec_round < kOutOfRounds)) ||
+         ((!rel_.fec_del_time_flag) &&
+          (pkt.fec_round <= rel_.fec_target_pkt_del_rounds))))
     {
+      // This value may be decremented if FEC encoded packets are used to
+      // regenerate FEC source packets.
       ++stats_pkts_.fec_total_ext_rcvd_;
     }
 
@@ -497,9 +488,9 @@ bool RcvdPktManager::AddPkt(DataHeader& pkt, const Time& rcv_time)
       {
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Redundant packet, received seq %" PRIPktSeqNumber " grp %"
-             PRIFecGroupId " idx %" PRIFecBlock " already present.\n",
+             PRIFecGroupId " idx %" PRIFecSize " already present.\n",
              conn_id_, stream_id_, pkt.sequence_number, pkt.fec_group_id,
-             pkt.fec_block_index);
+             pkt.fec_group_index);
       }
       else
       {
@@ -512,8 +503,12 @@ bool RcvdPktManager::AddPkt(DataHeader& pkt, const Time& rcv_time)
       // Update the packet receive statistics for this redundant FEC packet.
       if ((pkt.fec_flag) && (rel_.mode == SEMI_RELIABLE_ARQ_FEC) &&
           (pkt.fec_round > 0) &&
-          (pkt.fec_round <= rel_.fec_target_pkt_del_rounds))
+          (((rel_.fec_del_time_flag) && (pkt.fec_round < kOutOfRounds)) ||
+           ((!rel_.fec_del_time_flag) &&
+            (pkt.fec_round <= rel_.fec_target_pkt_del_rounds))))
       {
+        // This value may be decremented if FEC encoded packets are used to
+        // regenerate FEC source packets.
         ++stats_pkts_.fec_total_ext_rcvd_;
       }
 
@@ -534,11 +529,13 @@ bool RcvdPktManager::AddPkt(DataHeader& pkt, const Time& rcv_time)
 
   // If the packet just added to the window is an FEC packet and FEC packets
   // are expected, then update the packet receive statistics for this new FEC
-  // packet and attempt to regenerate packets within the same FEC block.
+  // packet and attempt to regenerate packets within the same FEC group.
   if ((pkt.fec_flag) && (rel_.mode == SEMI_RELIABLE_ARQ_FEC))
   {
     if ((pkt.fec_round > 0) &&
-        (pkt.fec_round <= rel_.fec_target_pkt_del_rounds))
+        (((rel_.fec_del_time_flag) && (pkt.fec_round < kOutOfRounds)) ||
+         ((!rel_.fec_del_time_flag) &&
+          (pkt.fec_round <= rel_.fec_target_pkt_del_rounds))))
     {
       if (pkt.fec_pkt_type == FEC_SRC_PKT)
       {
@@ -546,6 +543,8 @@ bool RcvdPktManager::AddPkt(DataHeader& pkt, const Time& rcv_time)
       }
       else
       {
+        // This value may be decremented if FEC encoded packets are used to
+        // regenerate FEC source packets.
         ++stats_pkts_.fec_total_ext_rcvd_;
       }
     }
@@ -638,7 +637,9 @@ bool RcvdPktManager::GetNextAppPkt(Packet*& pkt, size_t& payload_offset,
   if (rel_.mode == SEMI_RELIABLE_ARQ_FEC)
   {
     if ((pkt_info.fec_round_ > 0) &&
-        (pkt_info.fec_round_ <= rel_.fec_target_pkt_del_rounds))
+        (((rel_.fec_del_time_flag) && (pkt_info.fec_round_ < kOutOfRounds)) ||
+         ((!rel_.fec_del_time_flag) &&
+          (pkt_info.fec_round_ <= rel_.fec_target_pkt_del_rounds))))
     {
       if (pkt_info.payload_len_ > 0)
       {
@@ -792,11 +793,11 @@ bool RcvdPktManager::MoveForward(PktSeqNumber ne_seq_num)
 #ifdef SLIQ_DEBUG
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Storing FEC SRC pkt seq %" PRIPktSeqNumber " for grp %"
-             PRIFecGroupId " idx %" PRIFecBlock ".\n", conn_id_, stream_id_,
-             rcv_min_, rpi.fec_grp_id_, rpi.fec_blk_idx_);
+             PRIFecGroupId " idx %" PRIFecSize ".\n", conn_id_, stream_id_,
+             rcv_min_, rpi.fec_grp_id_, rpi.fec_grp_idx_);
 #endif
 
-        fec_src_pkts_[rpi.fec_blk_idx_].MoveFecInfo(rpi);
+        fec_src_pkts_[rpi.fec_grp_idx_].MoveFecInfo(rpi);
       }
 
       // Drop the element.
@@ -1055,11 +1056,11 @@ void RcvdPktManager::MoveWindowRight()
 #ifdef SLIQ_DEBUG
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Storing FEC SRC pkt seq %" PRIPktSeqNumber " for grp %"
-             PRIFecGroupId " idx %" PRIFecBlock ".\n", conn_id_, stream_id_,
-             rcv_min_, rpi.fec_grp_id_, rpi.fec_blk_idx_);
+             PRIFecGroupId " idx %" PRIFecSize ".\n", conn_id_, stream_id_,
+             rcv_min_, rpi.fec_grp_id_, rpi.fec_grp_idx_);
 #endif
 
-        fec_src_pkts_[rpi.fec_blk_idx_].MoveFecInfo(rpi);
+        fec_src_pkts_[rpi.fec_grp_idx_].MoveFecInfo(rpi);
       }
 
       if (rpi.packet_ != NULL)
@@ -1174,7 +1175,7 @@ void RcvdPktManager::StorePkt(DataHeader& pkt, RcvdPktInfo& pkt_info)
       (pkt.payload != NULL) && (pkt.num_ttg == 1))
   {
     Time    rcv_time(pkt.payload->recv_time());
-    double  owd_est_sec = conn_.GetOneWayDelayEst(pkt.timestamp, rcv_time);
+    double  owd_est_sec = conn_.GetRtlOwdEst(pkt.timestamp, rcv_time);
     double  new_ttg_sec = (pkt.ttg[0] - owd_est_sec);
 
     if (new_ttg_sec < 0.0)
@@ -1218,7 +1219,7 @@ void RcvdPktManager::StorePkt(DataHeader& pkt, RcvdPktInfo& pkt_info)
     pkt_info.fec_pkt_type_    = static_cast<uint8_t>(pkt.fec_pkt_type);
     pkt_info.fec_grp_id_      = pkt.fec_group_id;
     pkt_info.fec_enc_pkt_len_ = pkt.encoded_pkt_length;
-    pkt_info.fec_blk_idx_     = pkt.fec_block_index;
+    pkt_info.fec_grp_idx_     = pkt.fec_group_index;
     pkt_info.fec_num_src_     = pkt.fec_num_src;
     pkt_info.fec_round_       = pkt.fec_round;
 
@@ -1284,8 +1285,8 @@ void RcvdPktManager::StorePkt(DataHeader& pkt, RcvdPktInfo& pkt_info)
           if (pkt_info.fec_num_src_ != grp_info.fec_num_src_)
           {
             LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
-                 PRIStreamId ": Error, num_src mismatch (%" PRIFecBlock
-                 " != %" PRIFecBlock ").\n", conn_id_, stream_id_,
+                 PRIStreamId ": Error, num_src mismatch (%" PRIFecSize
+                 " != %" PRIFecSize ").\n", conn_id_, stream_id_,
                  pkt_info.fec_num_src_, grp_info.fec_num_src_);
             if (pkt_info.fec_num_src_ > grp_info.fec_num_src_)
             {
@@ -1326,11 +1327,11 @@ void RcvdPktManager::StorePkt(DataHeader& pkt, RcvdPktInfo& pkt_info)
       {
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Received FEC src pkt: seq %" PRIPktSeqNumber " rx %"
-             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecBlock
-             " rnd %" PRIFecRound " rcvd_src %" PRIFecBlock " rcvd_enc %"
-             PRIFecBlock " ttg_cnt %" PRITtgCount ".\n", conn_id_, stream_id_,
+             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecSize
+             " rnd %" PRIFecRound " rcvd_src %" PRIFecSize " rcvd_enc %"
+             PRIFecSize " ttg_cnt %" PRITtgCount ".\n", conn_id_, stream_id_,
              pkt.sequence_number, pkt.retransmission_count, pkt.fec_group_id,
-             pkt.fec_block_index, pkt.fec_round, grp_info.fec_src_rcvd_cnt_,
+             pkt.fec_group_index, pkt.fec_round, grp_info.fec_src_rcvd_cnt_,
              grp_info.fec_enc_rcvd_cnt_, grp_info.ttg_cnt_);
         if (pkt.num_ttg > 0)
         {
@@ -1343,11 +1344,11 @@ void RcvdPktManager::StorePkt(DataHeader& pkt, RcvdPktInfo& pkt_info)
       {
         LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
              ": Received FEC enc pkt: seq %" PRIPktSeqNumber " rx %"
-             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecBlock
-             " num_src %" PRIFecBlock " rnd %" PRIFecRound " rcvd_src %"
-             PRIFecBlock " rcvd_enc %" PRIFecBlock " ttg_cnt %" PRITtgCount
+             PRIRetransCount " grp %" PRIFecGroupId " idx %" PRIFecSize
+             " num_src %" PRIFecSize " rnd %" PRIFecRound " rcvd_src %"
+             PRIFecSize " rcvd_enc %" PRIFecSize " ttg_cnt %" PRITtgCount
              ".\n", conn_id_, stream_id_, pkt.sequence_number,
-             pkt.retransmission_count, pkt.fec_group_id, pkt.fec_block_index,
+             pkt.retransmission_count, pkt.fec_group_id, pkt.fec_group_index,
              pkt.fec_num_src, pkt.fec_round, grp_info.fec_src_rcvd_cnt_,
              grp_info.fec_enc_rcvd_cnt_, grp_info.ttg_cnt_);
         if (pkt.num_ttg > 0)
@@ -1383,8 +1384,8 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
        ": Examining FEC pkts in grp %" PRIFecGroupId " due to idx %"
-       PRIFecBlock " seq %" PRIPktSeqNumber ".\n", conn_id_, stream_id_,
-       grp_id, fec_pkt.fec_block_index, fec_pkt.sequence_number);
+       PRIFecSize " seq %" PRIPktSeqNumber ".\n", conn_id_, stream_id_,
+       grp_id, fec_pkt.fec_group_index, fec_pkt.sequence_number);
 #endif
 
   // Make sure that there is FEC group information for the packet.
@@ -1396,8 +1397,8 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
     return;
   }
 
-  // If no FEC encoded data packets have been received for the FEC block or
-  // the number of FEC source data packets for the FEC block is not known,
+  // If no FEC encoded data packets have been received for the FEC group or
+  // the number of FEC source data packets for the FEC group is not known,
   // then regeneration cannot be done yet.
   if ((grp_info.fec_enc_rcvd_cnt_ == 0) || (grp_info.fec_num_src_ == 0))
   {
@@ -1415,7 +1416,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
   }
 
   int           in_idx  = 0;
-  FecBlock      src_cnt = 0;
+  FecSize       src_cnt = 0;
   PktSeqNumber  seq_num = 0;
   RetransCount  max_rnd = 0;
 
@@ -1434,8 +1435,8 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
          seq_num);
 #endif
 
-    FecBlock  src_idx = 0;
-    bool      in_wnd  = SEQ_GEQ(seq_num, rcv_min_);
+    FecSize  src_idx = 0;
+    bool     in_wnd  = SEQ_GEQ(seq_num, rcv_min_);
 
     // If the packet is not in the current window, then search for it in the
     // FEC source packet array.
@@ -1452,7 +1453,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
 #ifdef SLIQ_DEBUG
           LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %"
                PRIStreamId ": Found FEC SRC seq %" PRIPktSeqNumber " grp %"
-               PRIFecGroupId " at index %" PRIFecBlock " outside of window."
+               PRIFecGroupId " at index %" PRIFecSize " outside of window."
                "\n", conn_id_, stream_id_, seq_num, grp_id, src_idx);
 #endif
 
@@ -1477,9 +1478,9 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
     RcvdPktInfo&  pkt_info = (in_wnd ?
                               rcvd_pkts_[(seq_num % kFlowCtrlWindowPkts)] :
                               fec_src_pkts_[(src_idx %
-                                             kMaxFecBlockLengthPkts)]);
+                                             kMaxFecGroupLengthPkts)]);
 
-    // If any packet has been regenerated in this FEC block, then the
+    // If any packet has been regenerated in this FEC group, then the
     // regeneration work is already done.
     if (IS_REGENERATED(pkt_info) && (pkt_info.fec_grp_id_ == grp_id))
     {
@@ -1495,7 +1496,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
     if (IS_RECEIVED(pkt_info) && IS_FEC(pkt_info) &&
         (pkt_info.fec_pkt_type_ == FEC_SRC_PKT))
     {
-      // If this FEC source packet is from another FEC block, then stop.
+      // If this FEC source packet is from another FEC group, then stop.
       if (pkt_info.fec_grp_id_ != grp_id)
       {
         break;
@@ -1512,11 +1513,11 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
 #ifdef SLIQ_DEBUG
       LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
            ": Found received FEC SRC pkt seq %" PRIPktSeqNumber " idx %"
-           PRIFecBlock ".\n", conn_id_, stream_id_, seq_num,
-           pkt_info.fec_blk_idx_);
+           PRIFecSize ".\n", conn_id_, stream_id_, seq_num,
+           pkt_info.fec_grp_idx_);
 #endif
 
-      // This is a received FEC source data packet for the FEC block we are
+      // This is a received FEC source data packet for the FEC group we are
       // looking for.
       uint8_t*  pkt_ptr    =
         pkt_info.packet_->GetBuffer(pkt_info.payload_offset_);
@@ -1526,7 +1527,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
       // Update the maximum FEC group round found so far.
       if (pkt_info.fec_round_ == 0)
       {
-        max_rnd = kMaxRnd;
+        max_rnd = kOutOfRounds;
       }
       else
       {
@@ -1566,8 +1567,8 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
       vdm_info_.in_pkt_data_[in_idx]                 = pkt_ptr;
       vdm_info_.in_pkt_size_[in_idx]                 = pkt_len;
       vdm_info_.in_enc_pkt_size_[in_idx]             = pkt_len;
-      vdm_info_.in_pkt_index_[in_idx]                = pkt_info.fec_blk_idx_;
-      vdm_info_.out_pkt_data_[pkt_info.fec_blk_idx_] = pkt_ptr;
+      vdm_info_.in_pkt_index_[in_idx]                = pkt_info.fec_grp_idx_;
+      vdm_info_.out_pkt_data_[pkt_info.fec_grp_idx_] = pkt_ptr;
       ++in_idx;
       ++src_cnt;
     }
@@ -1577,7 +1578,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
   if (src_cnt != grp_info.fec_src_rcvd_cnt_)
   {
     LogW(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Warning, only found %" PRIFecBlock " of %" PRIFecBlock " FEC SRC "
+         ": Warning, only found %" PRIFecSize " of %" PRIFecSize " FEC SRC "
          "pkts for grp %" PRIFecGroupId ".\n", conn_id_, stream_id_, src_cnt,
          grp_info.fec_src_rcvd_cnt_, grp_id);
     return;
@@ -1589,13 +1590,13 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
   if (SEQ_LT(grp_info.start_enc_seq_num_, rcv_min_))
   {
     LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Start of FEC ENC block (%" PRIPktSeqNumber ") < rcv_min_ (%"
+         ": Start of FEC ENC group (%" PRIPktSeqNumber ") < rcv_min_ (%"
          PRIPktSeqNumber ") in grp %" PRIFecGroupId ".\n", conn_id_,
          stream_id_, grp_info.start_enc_seq_num_, rcv_min_, grp_id);
     return;
   }
 
-  FecBlock  enc_cnt = 0;
+  FecSize  enc_cnt = 0;
 
   // Look for which FEC encoded packets have been received.
   for (seq_num = grp_info.start_enc_seq_num_;
@@ -1632,11 +1633,11 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
       }
 
       // The FEC encoded data packet index must not exceed the index limit.
-      if (pkt_info.fec_blk_idx_ >= kMaxFecBlockLengthPkts)
+      if (pkt_info.fec_grp_idx_ >= kMaxFecGroupLengthPkts)
       {
         LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-             ": Invalid index %" PRIFecBlock ".\n", conn_id_, stream_id_,
-             pkt_info.fec_blk_idx_);
+             ": Invalid index %" PRIFecSize ".\n", conn_id_, stream_id_,
+             pkt_info.fec_grp_idx_);
         return;
       }
 
@@ -1644,7 +1645,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
       if (pkt_info.fec_num_src_ != grp_info.fec_num_src_)
       {
         LogE(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-             ": Error, num_src mismatch (%" PRIFecBlock " != %" PRIFecBlock
+             ": Error, num_src mismatch (%" PRIFecSize " != %" PRIFecSize
              ").\n", conn_id_, stream_id_, pkt_info.fec_num_src_,
              grp_info.fec_num_src_);
         return;
@@ -1653,12 +1654,12 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
 #ifdef SLIQ_DEBUG
       LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
            ": Found received FEC ENC pkt seq %" PRIPktSeqNumber " idx %"
-           PRIFecBlock " num_src %" PRIFecBlock ".\n",
-           conn_id_, stream_id_, seq_num, pkt_info.fec_blk_idx_,
+           PRIFecSize " num_src %" PRIFecSize ".\n",
+           conn_id_, stream_id_, seq_num, pkt_info.fec_grp_idx_,
            pkt_info.fec_num_src_);
 #endif
 
-      // This is a received FEC encoded data packet for the FEC block we are
+      // This is a received FEC encoded data packet for the FEC group we are
       // looking for.
       uint8_t*  pkt_ptr = pkt_info.packet_->GetBuffer(
         pkt_info.payload_offset_);
@@ -1667,7 +1668,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
       // Update the maximum FEC group round found so far.
       if (pkt_info.fec_round_ == 0)
       {
-        max_rnd = kMaxRnd;
+        max_rnd = kOutOfRounds;
       }
       else
       {
@@ -1681,7 +1682,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
       vdm_info_.in_pkt_data_[in_idx]     = pkt_ptr;
       vdm_info_.in_pkt_size_[in_idx]     = pkt_len;
       vdm_info_.in_enc_pkt_size_[in_idx] = pkt_info.fec_enc_pkt_len_;
-      vdm_info_.in_pkt_index_[in_idx]    = pkt_info.fec_blk_idx_;
+      vdm_info_.in_pkt_index_[in_idx]    = pkt_info.fec_grp_idx_;
       ++in_idx;
       ++enc_cnt;
     }
@@ -1691,7 +1692,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
   if (enc_cnt != grp_info.fec_enc_rcvd_cnt_)
   {
     LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Error, only found %" PRIFecBlock " of %" PRIFecBlock " FEC ENC "
+         ": Error, only found %" PRIFecSize " of %" PRIFecSize " FEC ENC "
          "pkts.\n", conn_id_, stream_id_, enc_cnt,
          grp_info.fec_enc_rcvd_cnt_);
   }
@@ -1700,14 +1701,14 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
   if (vdm_info_.num_src_pkt_ != static_cast<int>(grp_info.fec_num_src_))
   {
     LogF(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-         ": Error, only found %d of %" PRIFecBlock " FEC pkts.\n", conn_id_,
+         ": Error, only found %d of %" PRIFecSize " FEC pkts.\n", conn_id_,
          stream_id_, vdm_info_.num_src_pkt_, grp_info.fec_num_src_);
   }
 
 #ifdef SLIQ_DEBUG
   LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
-       ": Results src %" PRIFecBlock " enc %" PRIFecBlock " num_src %"
-       PRIFecBlock ".\n", conn_id_, stream_id_, src_cnt, enc_cnt,
+       ": Results src %" PRIFecSize " enc %" PRIFecSize " num_src %"
+       PRIFecSize ".\n", conn_id_, stream_id_, src_cnt, enc_cnt,
        grp_info.fec_num_src_);
 #endif
 
@@ -1766,12 +1767,12 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
   if ((fec_pkt.fec_pkt_type == FEC_SRC_PKT) &&
       (fec_pkt.num_ttg == 1) && (grp_info.ttg_cnt_ >= grp_info.fec_num_src_))
   {
-    ttg_corr = (grp_info.ttg_[fec_pkt.fec_block_index] - fec_pkt.ttg[0]);
+    ttg_corr = (grp_info.ttg_[fec_pkt.fec_group_index] - fec_pkt.ttg[0]);
 
 #ifdef SLIQ_DEBUG
     LogD(kClassName, __func__, "Conn %" PRIEndptId " Stream %" PRIStreamId
          ": Packet TTG correction (%f - %f) = %f\n", conn_id_, stream_id_,
-         static_cast<double>(grp_info.ttg_[fec_pkt.fec_block_index]),
+         static_cast<double>(grp_info.ttg_[fec_pkt.fec_group_index]),
          fec_pkt.ttg[0], ttg_corr);
 #endif
   }
@@ -1839,7 +1840,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
         pkt_info.fec_pkt_type_    = static_cast<uint8_t>(FEC_SRC_PKT);
         pkt_info.fec_grp_id_      = grp_id;
         pkt_info.fec_enc_pkt_len_ = 0;
-        pkt_info.fec_blk_idx_     = static_cast<FecBlock>(out_idx);
+        pkt_info.fec_grp_idx_     = static_cast<FecSize>(out_idx);
         pkt_info.fec_num_src_     = grp_info.fec_num_src_;
         pkt_info.fec_round_       = max_rnd;
 
@@ -1857,7 +1858,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
 
         if (grp_info.ttg_cnt_ >= grp_info.fec_num_src_)
         {
-          double  owd_est_sec = conn_.GetOneWayDelayEst(0, rcv_time);
+          double  owd_est_sec = conn_.GetRtlOwdEst(0, rcv_time);
 
           new_ttg_sec = (grp_info.ttg_[out_idx] - owd_est_sec - ttg_corr);
 
@@ -1924,8 +1925,12 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
 
   // Update the packet receive statistics for the regenerated FEC source
   // packets.
-  if (max_rnd <= rel_.fec_target_pkt_del_rounds)
+  if (((rel_.fec_del_time_flag) && (max_rnd < kOutOfRounds)) ||
+      ((!rel_.fec_del_time_flag) &&
+       (max_rnd <= rel_.fec_target_pkt_del_rounds)))
   {
+    // Increment the number of FEC source packets received, and decrement the
+    // number of "extra" FEC encoded packets used to do the regeneration.
     stats_pkts_.fec_total_src_rcvd_ += static_cast<size_t>(enc_cnt);
     stats_pkts_.fec_total_ext_rcvd_ -= static_cast<size_t>(enc_cnt);
   }
@@ -1950,7 +1955,7 @@ void RcvdPktManager::RegeneratePkts(DataHeader& fec_pkt, const Time& rcv_time)
 RcvdPktManager::RcvdPktInfo::RcvdPktInfo()
     : packet_(NULL), seq_num_(0), payload_offset_(0), payload_len_(0),
       rexmit_cnt_(0), flags_(0), fec_pkt_type_(0), fec_grp_id_(0),
-      fec_enc_pkt_len_(0), fec_blk_idx_(0), fec_num_src_(0), fec_round_(0)
+      fec_enc_pkt_len_(0), fec_grp_idx_(0), fec_num_src_(0), fec_round_(0)
 {
 }
 
@@ -1981,7 +1986,7 @@ void RcvdPktManager::RcvdPktInfo::Clear()
   fec_pkt_type_    = 0;
   fec_grp_id_      = 0;
   fec_enc_pkt_len_ = 0;
-  fec_blk_idx_     = 0;
+  fec_grp_idx_     = 0;
   fec_num_src_     = 0;
   fec_round_       = 0;
 }
@@ -2006,7 +2011,7 @@ void RcvdPktManager::RcvdPktInfo::MoveFecInfo(RcvdPktInfo& rpi)
   fec_pkt_type_    = rpi.fec_pkt_type_;
   fec_grp_id_      = rpi.fec_grp_id_;
   fec_enc_pkt_len_ = rpi.fec_enc_pkt_len_;
-  fec_blk_idx_     = rpi.fec_blk_idx_;
+  fec_grp_idx_     = rpi.fec_grp_idx_;
   fec_num_src_     = rpi.fec_num_src_;
   fec_round_       = rpi.fec_round_;
 }
@@ -2323,7 +2328,10 @@ void RcvdPktManager::PktCounts::Update(const Reliability& rel,
 {
   // Update the target packet counts.
   if ((rel.mode == SEMI_RELIABLE_ARQ_FEC) && (pkt.fec_flag) &&
-      (pkt.fec_round > 0) && (pkt.fec_round <= rel.fec_target_pkt_del_rounds))
+      (pkt.fec_round > 0) &&
+      (((rel.fec_del_time_flag) && (pkt.fec_round < kOutOfRounds)) ||
+       ((!rel.fec_del_time_flag) &&
+        (pkt.fec_round <= rel.fec_target_pkt_del_rounds))))
   {
     ++target_tot_rcvd_;
   }

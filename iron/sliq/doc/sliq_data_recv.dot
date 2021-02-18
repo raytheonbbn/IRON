@@ -1,13 +1,14 @@
 digraph sliq_data_receive {
     strt [ shape = ellipse, label = "Start" ];
-    blk1 [ shape = box,     label = "Send ACK pkt\nStop ACK timer\nDiscard data pkt" ];
-    blk2 [ shape = box,     label = "Add data pkt to receive window" ];
+    blk1 [ shape = box,     label = "If move fwd is set in data pkt,\nadjust rcv window\nSend ACK pkt\nStop ACK timer\nDiscard data pkt" ];
+    blk2 [ shape = box,     label = "Add data pkt to rcv window\nIf data pkt has TTGs, adjust\nTTGs for one-way delay\nIf FEC data pkt, attempt to\nregenerate data pkts in FEC group" ];
     blk3 [ shape = box,     label = "Send ACK pkt\nStop ACK timer" ];
     blk4 [ shape = box,     label = "Start ACK timer" ];
-    blk5 [ shape = box,     label = "Deliver data to app\nClean up data pkts for delivered data in receive window" ];
+    blk5 [ shape = box,     label = "Deliver data to app\nClean up data pkts for delivered data in rcv window" ];
     blk6 [ shape = box,     label = "Send ACK pkt\nStop ACK timer" ];
+    blk7 [ shape = box,     label = "If move fwd is set in data pkt, adjust rcv window" ];
     dsc1 [ shape = diamond, label = "Is data pkt\npersist flag set?" ];
-    dsc2 [ shape = diamond, label = "Is data\nmissing?" ];
+    dsc2 [ shape = diamond, label = "In semi-rel\nARQ+FEC mode OR\nis data\nmissing?" ];
     dsc3 [ shape = diamond, label = "Is last data\npkt ACKed?" ];
     dsc4 [ shape = diamond, label = "Is data ready\nto deliver to app?" ];
 
@@ -28,8 +29,9 @@ digraph sliq_data_receive {
     blk4 -> dsc4;
 
     dsc4 -> blk5 [ label = "Yes" ];
-    blk5 -> strt;
-    dsc4 -> strt [ label = "No" ];
+    dsc4 -> blk7 [ label = "No" ];
+    blk5 -> blk7;
+    blk7 -> strt;
 
     strt -> blk6 [ label = "ACK timer expires" ];
     blk6 -> strt;

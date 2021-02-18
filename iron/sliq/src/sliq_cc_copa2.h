@@ -47,9 +47,10 @@
 namespace sliq
 {
 
-  /// \brief The Copa2 send-side congestion control algorithm.
+  /// \brief The second Beta version of the Copa send-side congestion control
+  /// algorithm.
   ///
-  /// Implements the Copa2 algorithm as described in the following paper:
+  /// Implements the Copa algorithm as described in the following paper:
   ///
   ///   Arun, V., and Balakrishnan, H.  Copa: Congestion Control Combining
   ///   Objective Optimization with Simple Window Adjustments.  Submitted to
@@ -58,7 +59,7 @@ namespace sliq
   /// Note the following deviations:
   /// - The initial congestion window size is set to 3 packets instead of 10
   ///   packets.
-  /// - In order to support different packet sizes, the Copa2 congestion
+  /// - In order to support different packet sizes, the Copa congestion
   ///   window size is converted from packets to bytes using a nominal packet
   ///   size of 1000 bytes.  When updating the congestion window size, the
   ///   adjustments amounts are scaled by the ratio of the packet size to the
@@ -100,12 +101,17 @@ namespace sliq
   ///   size to the value in use when the packet was sent and holds it there
   ///   for one RTT, then waits another RTT before allowing the damper to be
   ///   used again.  The result is the elimination of the large, slow
-  ///   oscillations as Copa2 locks onto the correct send rate.
+  ///   oscillations as Copa locks onto the correct send rate.
   ///
-  /// \todo Improve the Copa2 TCP compatibility algorithm.
+  /// This version of Copa is the second Beta version of the algorithm (Beta
+  /// 2).  MIT substantially updated the protocol after this version was
+  /// created.  The final version of Copa should be used instead of this
+  /// version.
+  ///
+  /// \todo Improve the Copa Beta 2 TCP compatibility algorithm.
   ///
   /// Note that this class is not thread-safe.
-  class Copa2 : public CongCtrlInterface
+  class CopaBeta2 : public CongCtrlInterface
   {
 
    public:
@@ -120,11 +126,11 @@ namespace sliq
     /// \param  framer     A reference to the packet framer.
     /// \param  pkt_pool   A reference to packet pool.
     /// \param  timer      A reference to timer.
-    Copa2(EndptId conn_id, bool is_client, CcId cc_id, Connection& conn,
-          Framer& framer, iron::PacketPool& pkt_pool, iron::Timer& timer);
+    CopaBeta2(EndptId conn_id, bool is_client, CcId cc_id, Connection& conn,
+              Framer& framer, iron::PacketPool& pkt_pool, iron::Timer& timer);
 
     /// \brief Destructor.
-    virtual ~Copa2();
+    virtual ~CopaBeta2();
 
     /// \brief Configure the congestion control algorithm.
     ///
@@ -400,23 +406,22 @@ namespace sliq
     /// \return  The amount of time until the next send can occur.
     virtual iron::Time TimeUntilSend(const iron::Time& now);
 
-    /// \brief Get the current pacing rate, in bits per second.
+    /// \brief Get the current send pacing rate.
     ///
     /// May be zero if the rate is unknown.
     ///
-    /// Note that the pacing rate might be higher than the computed congestion
-    /// control rate for window-based congestion controls to ensure that the
-    /// congestion window gets filled completely.
+    /// Note that the send pacing rate might be higher than the send rate for
+    /// window-based congestion controls to ensure that the congestion window
+    /// gets filled completely.
     ///
-    /// \return  The pacing rate of the congestion control algorithm, in bits
-    ///          per second.
-    virtual Capacity PacingRate();
+    /// \return  The current send pacing rate, in bits per second.  May be
+    ///          zero.
+    virtual Capacity SendPacingRate();
 
-    /// \brief Get the current estimated channel capacity, in bits per second.
+    /// \brief Get the current send rate.
     ///
-    /// \return  The current estimated channel capacity, in bits per second,
-    ///          or 0 if there is no estimate.
-    virtual Capacity CapacityEstimate();
+    /// \return  The current send rate, in bits per second.
+    virtual Capacity SendRate();
 
     /// \brief Get any optional congestion control parameters that must be
     /// transferred to the other end of the connection.
@@ -497,10 +502,10 @@ namespace sliq
    private:
 
     /// \brief Copy constructor.
-    Copa2(const Copa2& c);
+    CopaBeta2(const CopaBeta2& c);
 
     /// \brief Assignment operator.
-    Copa2& operator=(const Copa2& c);
+    CopaBeta2& operator=(const CopaBeta2& c);
 
     /// \brief Get the current time as a double.
     ///
@@ -574,7 +579,7 @@ namespace sliq
     /// part of the minimum RTT tracking recovery mechanism.
     static const size_t  kMinRttIstPeriods   = (kMinRttPeriods + 2);
 
-    /// \brief The Copa2 operating states.
+    /// \brief The Copa Beta 2 operating states.
     enum OpState
     {
       NOT_CONNECTED = 0,
@@ -586,7 +591,7 @@ namespace sliq
     struct FastStartup
     {
       FastStartup();
-      ~FastStartup();
+      virtual ~FastStartup();
       void Clear();
 
       /// The number of packets pairs sent.
@@ -621,7 +626,7 @@ namespace sliq
     struct MinRttTracking
     {
       MinRttTracking();
-      ~MinRttTracking();
+      virtual ~MinRttTracking();
 
       /// The minimum RTT observed in the current RTT period, in seconds.
       double      recent_min_rtt_;
@@ -651,7 +656,7 @@ namespace sliq
     struct TcpCompat
     {
       TcpCompat();
-      ~TcpCompat();
+      virtual ~TcpCompat();
 
       /// The flag recording if currently in default mode (false) or TCP mode
       /// (true).
@@ -715,7 +720,7 @@ namespace sliq
     struct Damper
     {
       Damper();
-      ~Damper();
+      virtual ~Damper();
 
       /// The current damping state.
       DamperState  state_;
@@ -816,7 +821,7 @@ namespace sliq
     /// The tolerance used for timers.
     iron::Time         timer_tolerance_;
 
-  }; // end class Copa2
+  }; // end class CopaBeta2
 
 }; // namespace sliq
 

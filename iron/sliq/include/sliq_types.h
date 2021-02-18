@@ -76,20 +76,20 @@ namespace sliq
   /// The SLIQ congestion control algorithms.  Up to 256 may be defined.
   enum CongCtrlAlg
   {
-    NO_CC = 0,                ///< No congestion control
-    TCP_CUBIC_BYTES_CC = 1,   ///< Google's TCP Cubic using bytes
-    TCP_RENO_BYTES_CC = 2,    ///< Google's TCP Reno using bytes
-    TCP_CUBIC_CC = 3,         ///< Linux kernel's TCP Cubic using bytes
-    COPA_CONST_DELTA_CC = 4,  ///< MIT's Copa with constant delta
-    COPA_M_CC = 5,            ///< MIT's Copa with IRON's maximum throughput
-                              ///< policy controller
-    COPA2_CC = 6,             ///< MIT's Copa2 with constant delta
-    COPA3_CC = 7,             ///< MIT's Copa3 with constant delta
+    NO_CC = 0,                 ///< No congestion control
+    TCP_CUBIC_BYTES_CC = 1,    ///< Google's TCP Cubic using bytes
+    TCP_RENO_BYTES_CC = 2,     ///< Google's TCP Reno using bytes
+    TCP_CUBIC_CC = 3,          ///< Linux kernel's TCP Cubic using bytes
+    COPA1_CONST_DELTA_CC = 4,  ///< MIT's Copa Beta 1 with constant delta
+    COPA1_M_CC = 5,            ///< MIT's Copa Beta 1 with IRON's maximum
+                               ///< throughput policy controller
+    COPA2_CC = 6,              ///< MIT's Copa Beta 2
+    COPA_CC = 7,               ///< MIT's Copa (final version)
 
-    FIXED_RATE_TEST_CC = 15,  ///< Fixed send rate instead of congestion
-                              ///< control, for testing only
+    FIXED_RATE_TEST_CC = 15,   ///< Fixed send rate instead of congestion
+                               ///< control, for testing only
 
-    DEFAULT_CC = 256          ///< Use SLIQ's default congestion control
+    DEFAULT_CC = 256           ///< Use SLIQ's default congestion control
   };
 
   /// The SLIQ congestion control specification.
@@ -97,13 +97,13 @@ namespace sliq
   /// Note the following:
   /// - cubic_reno_pacing is only applicable to the TCP_CUBIC_BYTES_CC and
   ///   TCP_RENO_BYTES_CC algoritms.
-  /// - deterministic_copa is only applicable to the COPA_CONST_DELTA_CC and
-  ///   COPA_M_CC algorithms.  It is highly suggested that this always be set
+  /// - deterministic_copa is only applicable to the COPA1_CONST_DELTA_CC and
+  ///   COPA1_M_CC algorithms.  It is highly suggested that this always be set
   ///   to true for these algorithms.
-  /// - copa_delta is only applicable to the COPA_CONST_DELTA_CC algorithm.
+  /// - copa_delta is only applicable to the COPA1_CONST_DELTA_CC algorithm.
   ///   This value must be between 0.004 and 1.0 (inclusive) for this
   ///   algorithm.
-  /// - copa3_anti_jitter is only applicable to the COPA3_CC algorithm.  This
+  /// - copa_anti_jitter is only applicable to the COPA_CC algorithm.  This
   ///   value is specified in seconds and must be between 0.0 and 1.0.
   /// - fixed_send_rate is only applicable to the FIXED_RATE_TEST_CC
   ///   algorithm.  This value is specified in bits/second and must be greater
@@ -113,8 +113,11 @@ namespace sliq
   {
     CongCtrl()
         : algorithm(DEFAULT_CC), cubic_reno_pacing(false),
-          deterministic_copa(false), copa_delta(0.0), copa3_anti_jitter(0.0),
+          deterministic_copa(false), copa_delta(0.0), copa_anti_jitter(0.0),
           fixed_send_rate(0)
+    {}
+
+    virtual ~CongCtrl()
     {}
 
     void SetNoCc()
@@ -123,7 +126,7 @@ namespace sliq
       cubic_reno_pacing  = false;
       deterministic_copa = false;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = 0;
     }
 
@@ -133,7 +136,7 @@ namespace sliq
       cubic_reno_pacing  = send_pacing;
       deterministic_copa = false;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = 0;
     }
 
@@ -143,7 +146,7 @@ namespace sliq
       cubic_reno_pacing  = send_pacing;
       deterministic_copa = false;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = 0;
     }
 
@@ -153,47 +156,47 @@ namespace sliq
       cubic_reno_pacing  = false;
       deterministic_copa = false;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = 0;
     }
 
-    void SetCopa(double delta, bool deterministic = true)
+    void SetCopaBeta1(double delta, bool deterministic = true)
     {
-      algorithm          = COPA_CONST_DELTA_CC;
+      algorithm          = COPA1_CONST_DELTA_CC;
       cubic_reno_pacing  = false;
       deterministic_copa = deterministic;
       copa_delta         = delta;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = 0;
     }
 
-    void SetCopaM(bool deterministic = true)
+    void SetCopaBeta1M(bool deterministic = true)
     {
-      algorithm          = COPA_M_CC;
+      algorithm          = COPA1_M_CC;
       cubic_reno_pacing  = false;
       deterministic_copa = deterministic;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = 0;
     }
 
-    void SetCopa2()
+    void SetCopaBeta2()
     {
       algorithm          = COPA2_CC;
       cubic_reno_pacing  = false;
       deterministic_copa = false;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = 0;
     }
 
-    void SetCopa3(double anti_jitter_sec = 0.0)
+    void SetCopa(double anti_jitter_sec = 0.0)
     {
-      algorithm          = COPA3_CC;
+      algorithm          = COPA_CC;
       cubic_reno_pacing  = false;
       deterministic_copa = false;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = anti_jitter_sec;
+      copa_anti_jitter   = anti_jitter_sec;
       fixed_send_rate    = 0;
     }
 
@@ -203,7 +206,7 @@ namespace sliq
       cubic_reno_pacing  = false;
       deterministic_copa = false;
       copa_delta         = 0.0;
-      copa3_anti_jitter  = 0.0;
+      copa_anti_jitter   = 0.0;
       fixed_send_rate    = send_rate_bps;
     }
 
@@ -213,15 +216,15 @@ namespace sliq
               (((algorithm != TCP_CUBIC_BYTES_CC) &&
                 (algorithm != TCP_RENO_BYTES_CC)) ||
                (cubic_reno_pacing == cc.cubic_reno_pacing)) &&
-              (((algorithm != COPA_CONST_DELTA_CC) &&
-                (algorithm != COPA_M_CC)) ||
+              (((algorithm != COPA1_CONST_DELTA_CC) &&
+                (algorithm != COPA1_M_CC)) ||
                (deterministic_copa == cc.deterministic_copa)) &&
-              ((algorithm != COPA_CONST_DELTA_CC) ||
+              ((algorithm != COPA1_CONST_DELTA_CC) ||
                (static_cast<int>(copa_delta * 1000.0) ==
                 static_cast<int>(cc.copa_delta * 1000.0))) &&
-              ((algorithm != COPA3_CC) ||
-               (static_cast<int>((copa3_anti_jitter * 1000000.0) + 0.5) ==
-                static_cast<int>((cc.copa3_anti_jitter * 1000000.0) +
+              ((algorithm != COPA_CC) ||
+               (static_cast<int>((copa_anti_jitter * 1000000.0) + 0.5) ==
+                static_cast<int>((cc.copa_anti_jitter * 1000000.0) +
                                  0.5))) &&
               ((algorithm != FIXED_RATE_TEST_CC) ||
                (fixed_send_rate == cc.fixed_send_rate)));
@@ -238,14 +241,14 @@ namespace sliq
     /// Cubic/Reno pacing flag setting
     bool         cubic_reno_pacing;
 
-    /// Deterministic Copa flag setting
+    /// Deterministic Copa Beta 1 flag setting
     bool         deterministic_copa;
 
-    /// Copa constant delta value
+    /// Copa Beta 1 constant delta value
     double       copa_delta;
 
-    /// Copa3 anti-jitter value, in seconds
-    double       copa3_anti_jitter;
+    /// Copa anti-jitter value, in seconds
+    double       copa_anti_jitter;
 
     /// Fixed send rate value, in bits/second
     Capacity     fixed_send_rate;
@@ -284,7 +287,7 @@ namespace sliq
   /// - The fec_target_pkt_recv_prob setting is only applicable to the
   ///   SEMI_RELIABLE_ARQ_FEC mode.  It specifies the target packet receive
   ///   probability at the peer, and must be
-  ///   (0.0 < fec_target_pkt_recv_prob <= 0.999).
+  ///   (0.95 <= fec_target_pkt_recv_prob <= 0.999).
   /// - The fec_del_time_flag setting is only applicable to the
   ///   SEMI_RELIABLE_ARQ_FEC mode.  It determines if the target packet
   ///   delivery limit is specified as a number of rounds or a time.
@@ -302,6 +305,9 @@ namespace sliq
         : mode(RELIABLE_ARQ), rexmit_limit(0), fec_target_pkt_recv_prob(0.0),
           fec_del_time_flag(false), fec_target_pkt_del_rounds(0),
           fec_target_pkt_del_time_sec(0.0)
+    {}
+
+    virtual ~Reliability()
     {}
 
     Reliability(ReliabilityMode m, RexmitLimit rx_lim, double recv_prob,
@@ -451,6 +457,9 @@ namespace sliq
   {
     RttPdd()
         : stream_id(0), rtt_usec(0), pdd_usec(0)
+    {}
+
+    virtual ~RttPdd()
     {}
 
     /// Stream ID

@@ -35,25 +35,6 @@
  */
 /* IRON: end */
 
-//============================================================================
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-//============================================================================
-
 #ifndef IRON_SLIQ_RECEIVED_PACKET_MANAGER_H_
 #define IRON_SLIQ_RECEIVED_PACKET_MANAGER_H_
 
@@ -235,7 +216,7 @@ namespace sliq
     struct RcvdPktInfo
     {
       RcvdPktInfo();
-      ~RcvdPktInfo();
+      virtual ~RcvdPktInfo();
       void Clear();
       void MoveFecInfo(RcvdPktInfo& rpi);
       static void SetPacketPool(iron::PacketPool* pool)
@@ -273,12 +254,12 @@ namespace sliq
       /// The FEC packet's encoded packet length.
       FecEncPktLen   fec_enc_pkt_len_;
 
-      /// The FEC packet's block index.
-      FecBlock       fec_blk_idx_;
+      /// The FEC packet's group index.
+      FecSize        fec_grp_idx_;
 
-      /// The FEC packet's number of FEC source packets in the block.  Only
+      /// The FEC packet's number of FEC source packets in the group.  Only
       /// set in FEC encoded packets.
-      FecBlock       fec_num_src_;
+      FecSize        fec_num_src_;
 
       /// The FEC packet's round number.
       FecRound       fec_round_;
@@ -289,7 +270,7 @@ namespace sliq
     struct RctRcvInfo
     {
       RctRcvInfo();
-      ~RctRcvInfo();
+      virtual ~RctRcvInfo();
       void RecordSeqNum(PktSeqNumber seq_num);
       bool GetSeqNum(size_t i, PktSeqNumber& seq_num);
 
@@ -308,7 +289,7 @@ namespace sliq
     struct AckBlkInfo
     {
       AckBlkInfo();
-      ~AckBlkInfo();
+      virtual ~AckBlkInfo();
       inline void Clear()
       {
         cnt_     = 0;
@@ -333,7 +314,7 @@ namespace sliq
     struct PktObsTime
     {
       PktObsTime();
-      ~PktObsTime();
+      virtual ~PktObsTime();
 
       /// The packet's sequence number.
       PktSeqNumber  seq_num_;
@@ -349,7 +330,7 @@ namespace sliq
     struct ObsTimeInfo
     {
       ObsTimeInfo();
-      ~ObsTimeInfo();
+      virtual ~ObsTimeInfo();
       void StoreObsTime(PktSeqNumber seq_num, PktTimestamp send_ts,
                         const iron::Time& rcv_time);
       void AddObsTimesToAckHdr(AckHeader& ack_hdr, const iron::Time& now);
@@ -374,22 +355,22 @@ namespace sliq
     struct FecGroupInfo
     {
       FecGroupInfo();
-      ~FecGroupInfo();
+      virtual ~FecGroupInfo();
 
       /// The FEC group ID.
       FecGroupId    fec_grp_id_;
 
       /// The number of FEC source packets in the FEC group.
-      FecBlock      fec_num_src_;
+      FecSize       fec_num_src_;
 
       /// The number of FEC source packets received in the FEC group.
-      FecBlock      fec_src_rcvd_cnt_;
+      FecSize       fec_src_rcvd_cnt_;
 
       /// The number of FEC encoded packets received in the FEC group.
-      FecBlock      fec_enc_rcvd_cnt_;
+      FecSize       fec_enc_rcvd_cnt_;
 
       /// The number of FEC source packets delivered from the FEC group.
-      FecBlock      delivered_cnt_;
+      FecSize       delivered_cnt_;
 
       /// The number of TTG values stored in the array for the FEC group.
       TtgCount      ttg_cnt_;
@@ -409,7 +390,7 @@ namespace sliq
     struct VdmDecodeInfo
     {
       VdmDecodeInfo();
-      ~VdmDecodeInfo();
+      virtual ~VdmDecodeInfo();
 
       /// The number of received FEC data packets.
       int            num_src_pkt_;
@@ -443,7 +424,7 @@ namespace sliq
     struct PktCounts
     {
       PktCounts();
-      ~PktCounts();
+      virtual ~PktCounts();
       void Update(const Reliability& rel, const DataHeader& pkt);
 
       /// The number of FEC packets delivered to the application that were
@@ -524,7 +505,7 @@ namespace sliq
     /// \param  pkt_info  The location where the packet is to be stored.
     void StorePkt(DataHeader& pkt, RcvdPktInfo& pkt_info);
 
-    /// \brief Attempt to regenerate any missing packets within the FEC block
+    /// \brief Attempt to regenerate any missing packets within the FEC group
     /// of the received FEC packet that has just been added to the window.
     ///
     /// \param  fec_pkt   The received FEC data packet that has just been
@@ -616,7 +597,7 @@ namespace sliq
     /// The array of received packet information for FEC source data packets
     /// prior to rcv_min_.  These packets are still needed for regenerating
     /// missing FEC source data packets and are indexed by the packet's FEC
-    /// block index.
+    /// group index.
     RcvdPktInfo*       fec_src_pkts_;
 
     /// The circular array of received packet information, with elements from

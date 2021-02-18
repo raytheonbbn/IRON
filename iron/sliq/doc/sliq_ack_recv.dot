@@ -1,6 +1,6 @@
 digraph sliq_ack_receive {
     strt [ shape = ellipse, label = "Start" ];
-    blk1 [ shape = box,     label = "Compute RTTs from ACK pkt observed times\nUpdate smoothed RTT and RTT variance\nMark ACKed/NACKed pkts in send window\nUpdate bytes in flight\nClean up ACKed pkts in send window\nUpdate send window size\nSchedule resend of lost data pkts\nSend MoveFwd pkt if needed" ];
+    blk1 [ shape = box,     label = "Compute RTTs from ACK pkt observed times\nUpdate smoothed RTT and RTT variance\nMark ACKed pkts in send window\nSchedule resend of lost data pkts\nUpdate bytes in flight\nClean up ACKed pkts in send window\nSend MoveFwd pkt if needed\nDo FEC End of Rounds state\nmachine for each observed time" ];
     blk2 [ shape = box,     label = "Stop RTO timer" ];
     blk3 [ shape = box,     label = "Start RTO timer with RTO duration" ];
     blk4 [ shape = box,     label = "Do Delayed Data Send state machine" ];

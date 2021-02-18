@@ -35,25 +35,6 @@
  */
 /* IRON: end */
 
-//============================================================================
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-//============================================================================
-
 #ifndef IRON_SLIQ_CC_INTERFACE_H_
 #define IRON_SLIQ_CC_INTERFACE_H_
 
@@ -424,23 +405,22 @@ namespace sliq
     /// \return  The amount of time until the next send can occur.
     virtual iron::Time TimeUntilSend(const iron::Time& now) = 0;
 
-    /// \brief Get the current pacing rate, in bits per second.
+    /// \brief Get the current send pacing rate.
     ///
     /// May be zero if the rate is unknown.
     ///
-    /// Note that the pacing rate might be higher than the computed congestion
-    /// control rate for window-based congestion controls to ensure that the
-    /// congestion window gets filled completely.
+    /// Note that the send pacing rate might be higher than the send rate for
+    /// window-based congestion controls to ensure that the congestion window
+    /// gets filled completely.
     ///
-    /// \return  The pacing rate of the congestion control algorithm, in bits
-    ///          per second.
-    virtual Capacity PacingRate() = 0;
+    /// \return  The current send pacing rate, in bits per second.  May be
+    ///          zero.
+    virtual Capacity SendPacingRate() = 0;
 
-    /// \brief Get the current estimated channel capacity, in bits per second.
+    /// \brief Get the current send rate.
     ///
-    /// \return  The current estimated channel capacity, in bits per second,
-    ///          or 0 if there is no estimate.
-    virtual Capacity CapacityEstimate() = 0;
+    /// \return  The current send rate, in bits per second.
+    virtual Capacity SendRate() = 0;
 
     /// \brief Get any optional congestion control parameters that must be
     /// transferred to the other end of the connection.

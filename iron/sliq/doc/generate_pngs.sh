@@ -7,8 +7,10 @@ dot -Tpng -o sliq_stream_estab.png      sliq_stream_estab.dot
 dot -Tpng -o sliq_stream_term.png       sliq_stream_term.dot
 dot -Tpng -o sliq_data_send.png         sliq_data_send.dot
 dot -Tpng -o sliq_data_can_send.png     sliq_data_can_send.dot
+dot -Tpng -o sliq_data_fec_send.png     sliq_data_fec_send.dot
 dot -Tpng -o sliq_data_recv.png         sliq_data_recv.dot
 dot -Tpng -o sliq_ack_recv.png          sliq_ack_recv.dot
+dot -Tpng -o sliq_ack_fec_recv.png      sliq_ack_fec_recv.dot
 dot -Tpng -o sliq_win_size.png          sliq_win_size.dot
 dot -Tpng -o sliq_persist.png           sliq_persist.dot
 dot -Tpng -o sliq_outage.png            sliq_outage.dot

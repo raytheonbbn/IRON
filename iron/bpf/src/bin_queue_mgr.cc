@@ -249,10 +249,8 @@ bool BinQueueMgr::Initialize(const ConfigInfo& config_info,
     ef_ordering  = EF_ORDERING_TTG;
   }
 
-  // Initialize the physical queue for the node's bin index / bin id.
-  BinId        my_bin_id = bin_map_.GetPhyBinId(my_bin_index_);
-  Ipv4Address  dst_addr(htonl((static_cast<in_addr_t>(10) << 24) |
-                              static_cast<in_addr_t>(my_bin_id)));
+  // Initialize the physical queue for the node's bin index.
+  Ipv4Address dst_addr = bin_map_.GetViableDestAddr(my_bin_index_);
 
   for (uint8_t lat = 0; lat < NUM_LATENCY_DEF; ++lat)
   {
@@ -376,7 +374,7 @@ bool BinQueueMgr::Initialize(const ConfigInfo& config_info,
   zero_time.Zero();
   last_dequeue_time_.Clear(zero_time);
 
-  // Set up the last dequeue time array.
+  // Set up the non-zombie queue depths array
   if (!non_zombie_queue_depth_bytes_.Initialize(bin_map_))
   {
     LogF(kClassName, __func__, "Unable to initialize non-zombie queue depth "
@@ -1383,6 +1381,12 @@ void BinQueueMgr::OnEnqueue(
   {
     zlr_manager_.DoZLREnqueueProcessing(pkt_length_bytes, lat, dsts);
   }
+
+  if (asap_mgr_)
+  {
+    asap_mgr_->OnEnqueue(lat, dsts);
+  }
+  
 }
 
 //============================================================================
@@ -1505,7 +1509,6 @@ void BinQueueMgr::MulticastAdjustDepths(
       }
     }
   }
-  AdjustQueueDepth(my_bin_index_, lat, (num_dsts * delta_bytes));
 }
 
 //============================================================================
@@ -1535,7 +1538,7 @@ void BinQueueMgr::AdjustQueueDepth(
   LogD(kClassName, __func__,
        "Modify Bin id %s queue depths of %" PRIu32 "B (LS %" PRIu32 
        "B) by %ldB for latency %s to %" PRIu32 "B (LS %" PRIu32 "B).\n",
-       bin_map_.GetIdToLog(bin_idx).c_str(),
+       bin_map_.GetIdToLog(bin_idx,true).c_str(),
        prev_depth, prev_ls_depth,
        delta_bytes, LatencyClass_Name[lat].c_str(),
        new_depth, new_ls_depth);
@@ -1546,7 +1549,7 @@ void BinQueueMgr::AdjustQueueDepth(
   {
     LogW(kClassName, __func__,
          "Attempt to decrease queue depth to below 0. MC bin %s"
-         ", dst bin %" PRIBinId ", latency %s: depth was %" PRIu32
+         ", dst bin %s, latency %s: depth was %" PRIu32
          ", attempted to decrement by %" PRId64 ".\n",
          bin_map_.GetIdToLog(my_bin_index_).c_str(),
          bin_map_.GetIdToLog(bin_idx).c_str(), LatencyClass_Name[lat].c_str(),
@@ -1561,7 +1564,7 @@ void BinQueueMgr::AdjustQueueDepth(
          "Queue overflow. MC bin %s"
          ", dst bin %s, latency %s: depth was %" PRIu32
          ", attempted to increment by %" PRId64 ".\n",
-         bin_map_.GetIdToLog(my_bin_index_).c_str(),
+         bin_map_.GetIdToLog(my_bin_index_,true).c_str(),
          bin_map_.GetIdToLog(bin_idx).c_str(), LatencyClass_Name[lat].c_str(),
          per_dst_per_lat_class_bytes_[lat][bin_idx], delta_bytes);
     per_dst_per_lat_class_bytes_[lat][bin_idx] = UINT32_MAX;

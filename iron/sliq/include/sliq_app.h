@@ -94,6 +94,8 @@ namespace sliq
   ///   the client.  These have odd stream IDs, and should be stored.
   /// - Call ConfigureTcpFriendliness() on the connection to change the TCP\n
   ///   friendliness/aggressiveness behavior of local transmissions.
+  /// - Call ConfigureRttOutlierRejection() on the connection to change the\n
+  ///   RTT outlier rejection setting.
   /// - Call ConfigureTransmitQueue() on any stream that requires the\n
   ///   transmit queue to be configured.
   /// - Call ConfigureRetransmissionLimit() on any semi-reliable ARQ stream\n
@@ -137,6 +139,8 @@ namespace sliq
   ///   the server.  These have even stream IDs, and should be stored.
   /// - Call ConfigureTcpFriendliness() on the connection to change the TCP\n
   ///   friendliness/aggressiveness behavior of local transmissions.
+  /// - Call ConfigureRttOutlierRejection() on the connection to change the\n
+  ///   RTT outlier rejection setting.
   /// - Call ConfigureTransmitQueue() on any stream that requires the\n
   ///   transmit queue to be configured.
   /// - Call ConfigureRetransmissionLimit() on any semi-reliable ARQ stream\n
@@ -395,6 +399,20 @@ namespace sliq
     /// \return  Returns true on success, or false if this setting is not
     ///          supported by the algorithm.
     bool ConfigureTcpFriendliness(EndptId endpt_id, uint32_t num_flows);
+
+    /// \brief Configure the round trip time (RTT) outlier rejection setting
+    /// of a client or server endpoint.
+    ///
+    /// This setting causes the endpoint to disregard RTT samples that are
+    /// artificially inflated due to non-network issues such as application
+    /// slowdowns due to logging output.  Defaults to disabled.
+    ///
+    /// \param  endpt_id  The endpoint ID which will be configured.
+    /// \param  rtt_or    The RTT outlier rejection setting, either enabled
+    ///                   (true) or disabled (false).
+    ///
+    /// \return  Returns true on success, or false on error.
+    bool ConfigureRttOutlierRejection(EndptId endpt_id, bool rtt_or);
 
     /// \brief Configure a stream's transmit queue.
     ///

@@ -1,0 +1,35 @@
+digraph sliq_data_can_send {
+    strt [ shape = ellipse, label = "Start" ];
+    done [ shape = ellipse, label = "Done" ];
+    blk1 [ shape = box,     label = "Loop over all FEC groups with EOR state for the stream" ];
+    blk2 [ shape = box,     label = "FEC group complete\nRemove FEC group EOR state\nRemove FEC group state" ];
+    blk3 [ shape = box,     label = "Increment FEC group round number" ];
+    blk4 [ shape = box,     label = "FEC group is out of rounds\nRemove FEC group EOR state\nRemove FEC group state\nUse ARQ to retransmit missing FEC source data pkts up to retransmit limit" ];
+    blk5 [ shape = box,     label = "Use FEC lookup tables on (N,PER,k,sr,er) to find rnd_n\nSplit rnd_n into k_rx FEC src pkt retransmits,\nm_rx FEC enc pkt retransmits, and m_add FEC enc pkts to generate\nAdd k_rx FEC src pkts to stream retransmit list\nAdd m_rx FEC enc pkts to stream retransmit list\nGenerate m_add additional FEC enc pkts\nAdd additional FEC enc pkts to additional FEC enc pkt queue" ];
+    dsc1 [ shape = diamond, label = "Is ACK obs pkt timestamp >=\nFEC group EOR timestamp?" ];
+    dsc2 [ shape = diamond, label = "Is FEC group (sr + er) >=\nFEC group k?" ];
+    dsc3 [ shape = diamond, label = "Is FEC group round number >\nFEC group N" ];
+
+    strt -> blk1 [ label = "For a received ACK pkt\nobserved pkt timestamp value" ];
+
+    blk1 -> dsc1 [ label = "For FEC group\nwith EOR state" ];
+
+    dsc1 -> dsc2 [ label = "Yes" ];
+    dsc1 -> blk1 [ label = "No" ];
+
+    dsc2 -> blk2 [ label = "Yes" ];
+    dsc2 -> blk3 [ label = "No" ];
+
+    blk2 -> blk1;
+
+    blk3 -> dsc3;
+
+    dsc3 -> blk4 [ label = "Yes" ];
+    dsc3 -> blk5 [ label = "No" ];
+
+    blk4 -> blk1;
+
+    blk5 -> blk1;
+
+    blk1 -> done [ label = "End of loop" ];
+}

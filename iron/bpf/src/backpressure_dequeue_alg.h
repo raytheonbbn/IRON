@@ -35,10 +35,8 @@
  */
 /* IRON: end */
 
-#ifndef IRON_BPF_UBER_FWD_ALG_H
-#define IRON_BPF_UBER_FWD_ALG_H
-
-/// \file uber_fwd_alg.h
+#ifndef IRON_BPF_BP_DEQUEUE_ALG_H
+#define IRON_BPF_BP_DEQUEUE_ALG_H
 
 #include "bin_indexable_array.h"
 #include "bin_map.h"
@@ -75,9 +73,9 @@ namespace iron
   ///         backpressure forwarding algorithms that select the next
   ///         transmission opportunity.  The class intends to keep as much
   ///         common code between base and latency-aware algorithms.
-  class UberFwdAlg
+  class BPDequeueAlg
   {
-  public:
+    public:
 
     /// The structure to store potential candidates in the search for next
     /// transmit opportunity.
@@ -243,7 +241,8 @@ namespace iron
       }
     };  // End TransmitCandidate.
 
-    /// \brief  Complete constructor.
+    /// \brief  Constructor.
+    /// 
     /// \param  bpfwder The Backpressure Forwarder object.
     /// \param  packet_pool The packet pool for recycling.
     /// \param  bin_map Mapping of IRON bins.
@@ -251,24 +250,24 @@ namespace iron
     /// \param  packet_history_mgr  The packet history manager.
     /// \param  num_path_ctrls  The number of path controllers currently in use.
     /// \param  path_ctrls  The array of path controllers.
-    UberFwdAlg(BPFwder& bpfwder, PacketPool& packet_pool,
-               BinMap& bin_map, QueueStore* q_store,
-               PacketHistoryMgr* packet_history_mgr,
-               size_t num_path_ctrls, PathCtrlInfo* path_ctrls);
+    BPDequeueAlg(BPFwder& bpfwder, PacketPool& packet_pool,
+                 BinMap& bin_map, QueueStore* q_store,
+                 PacketHistoryMgr* packet_history_mgr,
+                 size_t num_path_ctrls, PathCtrlInfo* path_ctrls);
 
     /// \brief  Destructor.
-    virtual ~UberFwdAlg();
+    virtual ~BPDequeueAlg();
 
     /// \brief  The method to initialize the BPFwding algorithms.
     ///
-    /// \param  config_info The config info object containing the configuration
-    ///                     data.
+    /// \param  config_info The config info object containing the
+    ///                     configuration data.
     void Initialize(const ConfigInfo& config_info);
 
     /// \brief  Set a different bpfwding approach, or modify key variables.
     ///
-    /// \param  config_info The config info object containing the configuration
-    ///                     data.
+    /// \param  config_info The config info object containing the
+    ///                     configuration data.
     void ResetFwdingAlg(const ConfigInfo& config_info);
 
     /// \brief  Unified implementation of the algorithms to find the next
@@ -283,10 +282,10 @@ namespace iron
     uint8_t FindNextTransmission(TxSolution* solutions,
                                  uint8_t max_num_solutions);
 
-    /// \brief  Add destinations to a packet transmission when this is the only
-    ///         viable path.
+    /// \brief Add destinations to a packet transmission when this is the
+    ///        only viable path.
     ///
-    /// \param  candidate The candidate transmission.
+    /// \param  candidate  The candidate transmission.
     void McastOpportunisticForwarding(TransmitCandidate& candidate);
 
     /// \brief  Get the index and value of the lowest latency path.
@@ -336,7 +335,64 @@ namespace iron
       hysteresis_ = hysteresis;
     }
 
-  protected:
+    protected:
+
+    /// \brief Zombify and Criticalize EF packets.
+    ///
+    /// \param  now                 The current time.
+    /// \param  max_num_path_ctrls  The maximum number of supported path
+    ///                             controllers.
+    /// \param  path_ctrl_q_sizes   Array of path controller transmit queue
+    ///                             sizes.
+    /// \param  candidate           Critical packet candidate.
+    ///
+    /// \return True if successful, false otherwise.
+    bool ZombifyAndCriticalizePkts(const Time& now, size_t max_num_path_ctrls,
+                                   int32_t* path_ctrl_q_sizes,
+                                   TransmitCandidate& candidate);
+
+    /// \brief Compute forwarding gradients.
+    ///
+    /// \param  path_ctrl_q_sizes  Array of path controller transmit queue
+    ///                            sizes.
+    /// \param  gradients          The computed (latency-insensitive)
+    ///                            forwarding gradients.
+    /// \param  ls_gradients       The computed latency-sensitive forwarding
+    ///                            gradients.
+    void ComputeGradients(int32_t* path_ctrl_q_sizes,
+                          OrderedList<Gradient, int64_t>& gradients,
+                          OrderedList<Gradient, int64_t>& ls_gradients);
+
+    /// \brief Find latency-sensitive packets for transmission.
+    ///
+    /// \param  now                The current time.
+    /// \param  ef_gradients       The latency-sensitive forwarding
+    ///                            gratients.
+    /// \param  path_ctrl_size     Array of path controller transmit queue
+    ///                            sizes.
+    /// \param  max_num_solutions  The maximum number of supported solutions.
+    /// \param  solutions          Array of transmit solutions.
+    /// \param  num_solutions      The found number of transmit solutions.
+    void FindLatencySensitivePkts(
+      const Time& now, OrderedList<Gradient, int64_t>* ef_gradients,
+      int32_t* path_ctrl_q_sizes, uint8_t max_num_solutions,
+      TxSolution* solutions, uint8_t& num_solutions);
+
+    /// \brief Find normal (latency-insensitive) packets for transmission.
+    ///
+    /// \param  now                The current time.
+    /// \param  gradients          The normal (latency-insensitive) forwarding
+    ///                            gratients.
+    /// \param  path_ctrl_q_sizes  Array of path controller transmit queue
+    ///                            sizes.
+    /// \param  max_num_solutions  The maximum number of supported solutions.
+    /// \param  solutions          Array of transmit solutions.
+    /// \param  num_solutions      The found number of transmit solutions.
+    void FindLatencyInsensitivePkts(
+      const Time& now, OrderedList<Gradient, int64_t>& gradients,
+      int32_t* path_ctrl_q_sizes, uint8_t max_num_solutions,
+      TxSolution* solutions, uint8_t& num_solutions);
+
     /// \brief  Determine if a packet is in history-constrained mode.  A packet
     ///         is history-constrained if all viable paths to the destination
     ///         start with a next-hop that has already been visited.
@@ -417,22 +473,24 @@ namespace iron
     /// \return The number of bytes found.
     uint32_t FindUcastPacketsForGradient(const Gradient& gradient,
                       LatencyClass& ttype,
-                      Time& method_start,
+                      const Time& method_start,
                       bool consider_latency,
                       OrderedList<TransmitCandidate, Time>& candidates,
                       uint32_t max_bytes);
 
     /// \brief  Find packets matching a multicast gradient.
     ///
-    /// \param  gradient  The candidate gradient.
-    /// \param  ttype The traffic type of the packets to get.
-    /// \param  candidates  The list of packet candidates, ordered.
-    /// \param  max_bytes The maximum number of bytes to fetch.
+    /// \param  gradient          The candidate gradient.
+    /// \param  ttype             The traffic type of the packets to get.
+    /// \param  consider_latency  Boolean indicating whether to consider
+    ///                           latency.
+    /// \param  candidates        The list of packet candidates, ordered.
+    /// \param  max_bytes         The maximum number of bytes to fetch.
     ///
     /// \return The number of candidates bytes.
-    uint32_t FindMcastPacketsForGradient(const Gradient& gradient,
-      LatencyClass& ttype, OrderedList<TransmitCandidate, Time>& candidates,
-      uint32_t max_bytes);
+    uint32_t FindMcastPacketsForGradient(
+      const Gradient& gradient, LatencyClass& ttype, bool consider_latency,
+      OrderedList<TransmitCandidate, Time>& candidates, uint32_t max_bytes);
 
     /// \brief  Add a queuing delay measurement to the moving average.  Only
     ///         real packets, with a valid TTG and non-EF may contribute to the
@@ -478,12 +536,13 @@ namespace iron
     /// Random number generator instance used by BP Fwding algorithm.
     RNG                     rng_;
 
-  private:
-    /// \brief  Disallowed copy constructor.
-    UberFwdAlg(const UberFwdAlg& other);
+    private:
 
-    /// \brief  Disallowed copy operator.
-    UberFwdAlg& operator= (const UberFwdAlg& other);
+    /// \brief  Copy constructor.
+    BPDequeueAlg(const BPDequeueAlg& other);
+
+    /// \brief  Copy operator.
+    BPDequeueAlg& operator= (const BPDequeueAlg& other);
 
     /// The reference to the backpressure forwarder object needed to get average
     /// time-to-reach values (ttr, the time it takes to reach a destination).
@@ -501,6 +560,9 @@ namespace iron
     /// The number of packets to inspect inside a queue for fwding algs, in
     /// bytes.
     uint32_t                queue_search_depth_;
+
+    /// The multicast queue search depth, in packets.
+    uint32_t                mcast_queue_search_depth_pkts_;
 
     /// The traffic types that can be Zombifiable.
     const LatencyClass*     zombifiable_ttypes_;
@@ -556,9 +618,6 @@ namespace iron
     /// Boolean indicating if we must dequeue multiple packets.
     bool                          multi_deq_;
 
-    /// Boolean indicating whether to exclude forwarding to infeasible paths.
-    bool                          exclude_infinite_paths_;
-
     /// Boolean indicating whether to use opportunistic forwarding.
     // NOTE: OF on degrades performance.
     bool                          enable_mcast_opportunistic_fwding_;
@@ -587,6 +646,7 @@ namespace iron
     /// be NULL.
     BinIndexableArray<GenXplot*>  delay_xplot_;
 
-  };    // UberFwdAlg
-}       // namespace iron
-#endif  // IRON_BPF_UBER_FWD_ALG_H
+  }; // end class BPDequeueAlg
+} // namespace iron
+
+#endif  // IRON_BPF_BP_DEQUEUE_ALG_H

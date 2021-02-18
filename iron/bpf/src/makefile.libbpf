@@ -116,6 +116,7 @@ LIB_NAME = libbpf.a
 # Define source code associated with library (e.g. SRC1.c SRC2.cc ...).
 #
 LIB_SOURCE = asap.cc \
+             backpressure_dequeue_alg.cc \
              backpressure_fwder.cc \
              bin_queue_mgr.cc \
              bpf_stats.cc \
@@ -129,7 +130,6 @@ LIB_SOURCE = asap.cc \
              queue_store.cc \
              sliq_cat.cc \
              sond.cc \
-             uber_fwd_alg.cc \
              zlr.cc
 
 #-----------------------------------------------------------------------------

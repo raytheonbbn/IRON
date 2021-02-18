@@ -1,0 +1,2 @@
+{"objective":"mcastInfo",
+ "linkConstraints": {"minCapacity": 5000000, "maxLatency": 400000}}

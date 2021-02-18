@@ -160,9 +160,8 @@ namespace sliq
     /// \brief A structure for queue elements.
     struct QueueElement
     {
-      QueueElement()
-          : enqueue_time(), pkt(NULL)
-      {}
+      QueueElement() : enqueue_time(), pkt(NULL) {}
+      virtual ~QueueElement() {}
 
       /// The packet's enqueue time.
       iron::Time     enqueue_time;

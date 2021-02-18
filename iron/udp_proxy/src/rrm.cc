@@ -117,7 +117,9 @@ Packet* Rrm::CreateNewRrm(PacketPool& pkt_pool, iron::FourTuple& four_tuple)
 
   rrm->SetLengthInBytes(length);
   rrm->UpdateIpLen();
-  rrm->UpdateIpChecksum();
+
+  // Don't need to do this because RRMs are internal to GNAT.
+  // rrm->UpdateChecksums();
 
   LogD(kClassName, __func__,
        "Created RRM with length %zuB.\n", length);
@@ -177,7 +179,9 @@ void Rrm::FillReport(Packet* rrm,
 
   rrm->SetLengthInBytes(length);
   rrm->UpdateIpLen();
-  rrm->UpdateIpChecksum();
+
+  // Don't need to do this because RRMs are internal to GNAT.
+  // rrm->UpdateChecksums();
 }
 
 //============================================================================

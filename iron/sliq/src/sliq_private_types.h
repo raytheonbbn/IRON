@@ -35,22 +35,6 @@
  * SOFTWARE.
  */
 /* IRON: end */
-//
-// This code is derived in part from the stablebits libquic code available at:
-// https://github.com/stablebits/libquic.
-//
-// The stablebits code was forked from the devsisters libquic code available
-// at:  https://github.com/devsisters/libquic
-//
-// The devsisters code was extracted from Google Chromium's QUIC
-// implementation available at:
-// https://chromium.googlesource.com/chromium/src.git/+/master/net/quic/
-//
-// The original source code file markings are preserved below.
-
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 //============================================================================
 
 #ifndef IRON_SLIQ_PRIVATE_TYPES_H
@@ -67,11 +51,11 @@ namespace sliq
   typedef uint8_t   CcId;
   typedef uint32_t  ClientId;
   typedef uint32_t  EndOffset;
-  typedef uint8_t   FecBlock;
   typedef uint16_t  FecEncPktLen;
   typedef uint32_t  FecGroupBitVec;
   typedef uint16_t  FecGroupId;
   typedef uint8_t   FecRound;
+  typedef uint8_t   FecSize;
   typedef uint16_t  MsgTag;
   typedef uint32_t  PktCount;
   typedef uint32_t  PktSeqNumber;
@@ -85,11 +69,11 @@ namespace sliq
 #define PRICcId              PRIu8
 #define PRIClientId          PRIu32
 #define PRIEndOffset         PRIu32
-#define PRIFecBlock          PRIu8
 #define PRIFecEncPktLen      PRIu16
 #define PRIFecGroupBitVec    PRIu32
 #define PRIFecGroupId        PRIu16
 #define PRIFecRound          PRIu8
+#define PRIFecSize           PRIu8
 #define PRIMsgTag            PRIu16
 #define PRIPktCount          PRIu32
 #define PRIPktSeqNumber      PRIu32

@@ -1,37 +1,59 @@
 digraph sliq_data_can_send {
     strt [ shape = ellipse, label = "Start" ];
     done [ shape = ellipse, label = "Done" ];
-    blk1 [ shape = box,     label = "Loop over each priority from high to low" ];
-    blk2 [ shape = box,     label = "Loop over all streams with priority P\nstarting with next stream for priority P" ];
-    blk3 [ shape = box,     label = "Dequeue data from stream xmit queue\nCreate data pkt for data\nAssign seq num to data pkt\nSet data pkt blocked flag as necessary\nSend data pkt\nIf RTO timer is not started, start RTO timer with RTO duration\nAdd data pkt to stream send window" ];
-    blk4 [ shape = box,     label = "Record next stream with priority P" ];
-    dsc1 [ shape = diamond, label = "Is connection\ncongestion control blocked?" ];
-    dsc2 [ shape = diamond, label = "Is stream xmit\nqueue empty?" ];
-    dsc3 [ shape = diamond, label = "Is stream\nflow control blocked?" ];
-    dsc4 [ shape = diamond, label = "Is connection\ncongestion control blocked?" ];
+    blk1 [ shape = box,     label = "Loop over pass from 0 to 1" ];
+    blk2 [ shape = box,     label = "Loop over each priority from high to low" ];
+    blk3 [ shape = box,     label = "Loop over all streams with priority P\nstarting with next stream for priority P" ];
+    blk4 [ shape = box,     label = "Dequeue orig FEC encoded pkt\nAssign seq num to FEC encoded pkt\nIf FEC group is lat-sens, add TTGs to FEC\nencoded pkt adjusted for hold times\nIf pkt is last FEC pkt for current\nround, record EOR for FEC group\nSend FEC encoded pkt\nIf RTO timer is not started,\nstart RTO timer with RTO duration\nAdd FEC encoded pkt to stream send window" ];
+    blk5 [ shape = box,     label = "Access rexmit pkt\nIf addtnl FEC encoded pkt,\nassign seq num to pkt\nIf data pkt is lat-sens, updateTTGs in\ndata pkt adjusted for hold times\nIf pkt is FEC pkt and is last FEC pkt for\ncurrent round, record EOR for FEC group\nSend rexmit pkt\nIf RTO timer is not started, start\nRTO timer with RTO duration\nIf addtnl FEC encoded pkt, add\npkt to stream send window" ];
+    blk6 [ shape = box,     label = "Dequeue data from stream xmit queue\nCreate data pkt for data\nIf lat-sens data, add TTG to data\npkt adjusted for hold time\nAssign seq num to data pkt\nDo FEC Data Send state machine\nSend data pkt\nIf RTO timer is not started, start\nRTO timer with RTO duration\nAdd data pkt to stream send window" ];
+    blk7 [ shape = box,     label = "Record next stream with priority P" ];
+    blk8 [ shape = box,     label = "Send any waiting CC sync pkts\nSend any waiting rcvd pkt count pkts" ];
+    dsc1 [ shape = diamond, label = "Is PV == 0?" ];
+    dsc2 [ shape = diamond, label = "Does stream have orig\nFEC encoded pkt to send?" ];
+    dsc3 [ shape = diamond, label = "Does connection congestion control\nallow orig FEC encoded pkt send?" ];
+    dsc4 [ shape = diamond, label = "Does stream have rexmit or\n addtnl FEC encoded pkt to send?" ];
+    dsc5 [ shape = diamond, label = "Does connection congestion\ncontrol allow pkt rexmit?" ];
+    dsc6 [ shape = diamond, label = "Does stream have data\nwaiting in xmit queue?" ];
+    dsc7 [ shape = diamond, label = "Does connection congestion\ncontrol allow new data pkt send?" ];
 
-    strt -> dsc1 [ label = "For a connection" ];
+    strt -> blk1 [ label = "For a connection" ];
 
-    dsc1 -> done [ label = "Yes" ];
-    dsc1 -> blk1 [ label = "No" ];
+    blk1 -> blk2 [ label = "For pass value PV" ];
+    blk1 -> blk8 [ label = "End of loop" ];
 
-    blk1 -> blk2 [ label = "For priority P" ];
-    blk1 -> done [ label = "End of loop" ];
+    blk2 -> blk3 [ label = "For priority P" ];
+    blk2 -> blk1 [ label = "End of loop" ];
 
-    blk2 -> dsc2 [ label = "For a stream" ];
-    blk2 -> blk1 [ label = "End of loop with\nno data sent" ];
-    blk2 -> blk2 [ label = "End of loop with\ndata sent" ];
+    blk3 -> dsc1 [ label = "For a stream" ];
+    blk3 -> blk2 [ label = "End of loop with\nno pkts sent" ];
+    blk3 -> blk3 [ label = "End of loop with\npkts sent" ];
 
-    dsc2 -> dsc3 [ label = "No" ];
-    dsc2 -> blk4 [ label = "Yes" ];
+    dsc1 -> dsc2 [ label = "Yes" ];
+    dsc1 -> dsc6 [ label = "No" ];
 
-    dsc3 -> blk3 [ label = "No" ];
+    dsc2 -> dsc3 [ label = "Yes" ];
+    dsc2 -> dsc4 [ label = "No" ];
+
     dsc3 -> blk4 [ label = "Yes" ];
+    dsc3 -> dsc4 [ label = "No" ];
 
-    blk3 -> blk4;
+    dsc4 -> dsc5 [ label = "Yes" ];
+    dsc4 -> blk7 [ label = "No" ];
 
-    blk4 -> dsc4;
+    dsc5 -> blk5 [ label = "Yes" ];
+    dsc5 -> blk8 [ label = "No" ];
 
-    dsc4 -> blk2 [ label = "No" ];
-    dsc4 -> done [ label = "Yes" ];
+    dsc6 -> dsc7 [ label = "Yes" ];
+    dsc6 -> blk7 [ label = "No" ];
+
+    dsc7 -> blk6 [ label = "Yes" ];
+    dsc7 -> blk8 [ label = "No" ];
+
+    blk4 -> blk7;
+    blk5 -> blk7;
+    blk6 -> blk7;
+    blk7 -> blk3;
+
+    blk8 -> done;
 }
