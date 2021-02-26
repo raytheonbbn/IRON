@@ -1,0 +1,20 @@
+var searchData=
+[
+  ['cap_5fest',['cap_est',['../structsliq_1_1CcAlgs.html#ac43ef01b7fa8ae4e18624c2e7c70339e',1,'sliq::CcAlgs']]],
+  ['capacity_5f',['capacity_',['../structiron_1_1BPFwder_1_1NodeInfo.html#a36de28110c9de3b0dcf9b17e7ffc7035',1,'iron::BPFwder::NodeInfo']]],
+  ['cc_5falg',['cc_alg',['../structsliq_1_1CcAlg.html#a841ea8f3e8ab783200fe8d8051232a19',1,'sliq::CcAlg::cc_alg()'],['../structsliq_1_1CcAlgs.html#ad63be3ee53c6ff4ff074074896b8bbca',1,'sliq::CcAlgs::cc_alg()']]],
+  ['cc_5fsettings',['cc_settings',['../structsliq_1_1CcAlgs.html#a77bc384ecfbc418f04c8d39c782b9b3a',1,'sliq::CcAlgs']]],
+  ['ccl_5ftime_5fsec',['ccl_time_sec',['../structsliq_1_1CcAlgs.html#a4beb9ac29d742408ac258e3c8d552c2e',1,'sliq::CcAlgs']]],
+  ['chan_5fcap_5fest_5fbps',['chan_cap_est_bps',['../structsliq_1_1CcAlgs.html#a5182c724b488cdfe77cfaca4f8840f4d',1,'sliq::CcAlgs']]],
+  ['chunk_5fid',['chunk_id',['../structfecchunktrailer.html#afb4d148f0432acce52783c40136adc3e',1,'fecchunktrailer']]],
+  ['circ_5frelease_5fhist_5f',['circ_release_hist_',['../structUdpProxy_1_1ReleaseRecord.html#ae142aa7047511cb8d5b7faa6d843b0df',1,'UdpProxy::ReleaseRecord']]],
+  ['config',['config',['../classUdpProxy.html#a355281df7f1110b966ca092785a50a58',1,'UdpProxy']]],
+  ['config_5finfo_5f',['config_info_',['../classUdpProxyOpts.html#a3d6bf02f84fb0ce6c3ddab99f0bd8466',1,'UdpProxyOpts']]],
+  ['conn_5fid_5f',['conn_id_',['../classsliq_1_1CongCtrlInterface.html#a7c3e0147dbe066f2e599a2cf755190e4',1,'sliq::CongCtrlInterface']]],
+  ['connection_5fmap_5f',['connection_map_',['../classiron_1_1Amp.html#a291f8ee76846ccfa6fa17db10d73552d',1,'iron::Amp']]],
+  ['context_5fdscp_5fcache_5f',['context_dscp_cache_',['../classTcpProxy.html#afa8f4dfba6fb840358cdb403188ff7e2',1,'TcpProxy']]],
+  ['copa_5fanti_5fjitter',['copa_anti_jitter',['../structsliq_1_1CongCtrl.html#af32e7c8b416936cb8ebd3b2750baadc2',1,'sliq::CongCtrl']]],
+  ['copa_5fdelta',['copa_delta',['../structsliq_1_1CongCtrl.html#afe1e97dc222bc03eb12714f46c68f07e',1,'sliq::CongCtrl']]],
+  ['coupled_5fflows_5f',['coupled_flows_',['../structiron_1_1FlowInfo.html#ad0cd501cb4e71890d0b509736ea08c69',1,'iron::FlowInfo']]],
+  ['cubic_5freno_5fpacing',['cubic_reno_pacing',['../structsliq_1_1CongCtrl.html#a4ee78c94ad4580b2dd87335bbe402867',1,'sliq::CongCtrl']]]
+];

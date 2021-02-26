@@ -1,0 +1,27 @@
+var searchData=
+[
+  ['n_5fchunks',['n_chunks',['../structfecchunktrailer.html#ab804cb3e04df2ef96ae2b6d776210504',1,'fecchunktrailer']]],
+  ['nbr_5flat_5fmean_5f',['nbr_lat_mean_',['../structiron_1_1BPFwder_1_1NodeInfo.html#a54c303ad532d4aacb6bd6b778c0334e7',1,'iron::BPFwder::NodeInfo']]],
+  ['nbr_5flat_5fvar_5f',['nbr_lat_var_',['../structiron_1_1BPFwder_1_1NodeInfo.html#a9491ed7cd5f00bb444c3b3212dd19bb8',1,'iron::BPFwder::NodeInfo']]],
+  ['nbr_5fvirtual_5fqueue_5fdepths_5f',['nbr_virtual_queue_depths_',['../classiron_1_1QueueStore.html#ab3dd721ebf042bd5c0380bfdc8285c55',1,'iron::QueueStore']]],
+  ['next_5fadmission_5ftime_5f',['next_admission_time_',['../classAdmissionController.html#a2152b114e906d3ebabfc87ae72263c4b',1,'AdmissionController']]],
+  ['next_5fdecode_5fexp_5ftime_5f',['next_decode_exp_time_',['../classUdpProxy.html#aac3ed53216bedf9657bbbe6385a105fe',1,'UdpProxy']]],
+  ['next_5fep_5fid_5f',['next_ep_id_',['../classiron_1_1RemoteControl.html#a375aa4ba1ff5d06108fc8f38d22f7c30',1,'iron::RemoteControl']]],
+  ['next_5fsched_5fsocket_5fsvc_5ftime_5f',['next_sched_socket_svc_time_',['../classTcpProxy.html#ad9b6c807e2a55de0078cfa8a10b44061',1,'TcpProxy']]],
+  ['next_5fsched_5fsvc_5fflows_5ftime_5f',['next_sched_svc_flows_time_',['../classUdpProxy.html#ade167fd688267b4e5f96cb1d6ae2218e',1,'UdpProxy']]],
+  ['next_5fsend_5ftime',['next_send_time',['../structsliq_1_1CcAlg.html#acfbefd4443cc9b821dfe99819a787c57',1,'sliq::CcAlg']]],
+  ['node_5fbin_5fidx_5f',['node_bin_idx_',['../classiron_1_1BinQueueMgr.html#a925c1cb556aec14b2ba8a4a28c67d45f',1,'iron::BinQueueMgr']]],
+  ['node_5frecords_5f',['node_records_',['../classiron_1_1BPFwder.html#aad6748ce35c32f190bf3accdd64f8d03',1,'iron::BPFwder']]],
+  ['nodes_5fto_5fexclude_5f',['nodes_to_exclude_',['../structiron_1_1BPFwder_1_1PathInfo.html#a90a394c6820857c0e0416a2cc27658e4',1,'iron::BPFwder::PathInfo']]],
+  ['nominal_5frate_5fbps_5f',['nominal_rate_bps_',['../structiron_1_1FlowInfo.html#ac18a37f49a3db89c676b5dbb6bd6e210',1,'iron::FlowInfo']]],
+  ['norm_5fhigh_5faddr_5f',['norm_high_addr_',['../classUdpProxy.html#a35368fcb311c7d08f209ada466d488e9',1,'UdpProxy']]],
+  ['norm_5flow_5faddr_5f',['norm_low_addr_',['../classUdpProxy.html#abc6aac8a37a36c22150e1856cb95fa21',1,'UdpProxy']]],
+  ['normalized_5futility_5f',['normalized_utility_',['../structiron_1_1FlowInfo.html#a4b8dac5ec1617590779d08936b377f98',1,'iron::FlowInfo']]],
+  ['num_5fcc_5falg',['num_cc_alg',['../structsliq_1_1CcAlgs.html#a2982aef8a054d18baba98d2975429015',1,'sliq::CcAlgs']]],
+  ['num_5fnodes_5fto_5fexclude_5f',['num_nodes_to_exclude_',['../structiron_1_1BPFwder_1_1PathInfo.html#aab3a94f74d9dc43b0a13618bc37fb903',1,'iron::BPFwder::PathInfo']]],
+  ['num_5fpath_5fctrls_5f',['num_path_ctrls_',['../classiron_1_1BPDequeueAlg.html#a3b76a77406545d04416764f8a836ec5b',1,'iron::BPDequeueAlg::num_path_ctrls_()'],['../classiron_1_1BPFwder.html#a4fff11ad6d53393c8ba98b0e74bd38a0',1,'iron::BPFwder::num_path_ctrls_()']]],
+  ['num_5frecon_5freqs_5f',['num_recon_reqs_',['../classTcpProxy.html#a1dec5b8e2bed85b12befaf74bdd45f18',1,'TcpProxy']]],
+  ['num_5freleased_5fbytes_5f',['num_released_bytes_',['../structUdpProxy_1_1ReleaseRecord.html#a47182c2b364e18fb64a6b35a9b657ee1',1,'UdpProxy::ReleaseRecord']]],
+  ['num_5freleased_5fpackets_5f',['num_released_packets_',['../structUdpProxy_1_1ReleaseRecord.html#aa149c31d54da60dd515f15c2cd610acd',1,'UdpProxy::ReleaseRecord']]],
+  ['num_5fserver_5flists_5f',['num_server_lists_',['../classTcpProxy.html#a1b87ca5a34c9ec0fe0f05cd857b9292e',1,'TcpProxy']]]
+];

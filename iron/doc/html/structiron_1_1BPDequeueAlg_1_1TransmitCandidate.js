@@ -1,0 +1,25 @@
+var structiron_1_1BPDequeueAlg_1_1TransmitCandidate =
+[
+    [ "TransmitCandidate", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a9dbee526eb5849939bc94844547b5564", null ],
+    [ "TransmitCandidate", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a165901b7e94a2535c6c3b496edece423", null ],
+    [ "TransmitCandidate", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a057adce16ca92959427f26d0d83919d3", null ],
+    [ "TransmitCandidate", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a12054dc7c8669e355cfbaa3f8ae078fd", null ],
+    [ "~TransmitCandidate", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a8c375c9bab4623b5365a791e837ad4be", null ],
+    [ "operator=", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a393ccedc6f49502dd66dfe2fde300cd9", null ],
+    [ "operator==", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#acb590ecc81530c77f68e10ff2557f413", null ],
+    [ "ToString", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a73ed93a99996c7e03fe442e38c6c8a7f", null ],
+    [ "bin_idx", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a0bffab9e15f5614a6e25c7ffcb32039c", null ],
+    [ "dequeue_loc", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a7f41f5e2b6e283aae875671857c30297", null ],
+    [ "dst_vec", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a7c74aa83d905871b90f30428d48a3971", null ],
+    [ "gradient", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a1d06ffb0a12cd58d54add6b581b9ca32", null ],
+    [ "id_to_log", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a527ff823d8fc8d520398facba6cf50af", null ],
+    [ "is_dst", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#ab52243a83d83e561377ba50479bb4652", null ],
+    [ "is_valid", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#ac302dced5c79df8f5102bc516b038878", null ],
+    [ "latency_class", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#ae93e2881550be61d9ba7ed8bfd62e231", null ],
+    [ "path_ctrl_index", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#aae2130c35db62b0c559c8c9275055529", null ],
+    [ "pkt", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a6800ce35c041f71a04f73a2206a779ef", null ],
+    [ "q_mgr", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#afb2dc602880bf856ec254fbed2fa4fce", null ],
+    [ "ttg", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a370e06ceecee444f6ee48bcb1aae2c59", null ],
+    [ "ttr", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a084a2a28edf96f012dad5fb6ad00fc03", null ],
+    [ "virtual_len", "structiron_1_1BPDequeueAlg_1_1TransmitCandidate.html#a063c9856903ccbb7e436b80d16b89d0a", null ]
+];

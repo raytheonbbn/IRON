@@ -1,0 +1,9 @@
+<map id="sliq::CongCtrlInterface" name="sliq::CongCtrlInterface">
+<area shape="rect" id="node2" href="$classsliq_1_1Copa.html" title="The final version of the Copa send&#45;side congestion control algorithm. " alt="" coords="231,5,313,32"/>
+<area shape="rect" id="node3" href="$classsliq_1_1CopaBeta1.html" title="The first Beta version of the Copa send&#45;side congestion control algorithm. " alt="" coords="215,56,329,83"/>
+<area shape="rect" id="node4" href="$classsliq_1_1CopaBeta2.html" title="The second Beta version of the Copa send&#45;side congestion control algorithm. " alt="" coords="215,107,329,133"/>
+<area shape="rect" id="node5" href="$classsliq_1_1Cubic.html" title="The TCP CUBIC send&#45;side congestion control algorithm adapted to work on bytes (as opposed to segments..." alt="" coords="230,157,314,184"/>
+<area shape="rect" id="node6" href="$classsliq_1_1CubicBytes.html" title="The TCP cubic send&#45;side congestion control algorithm that operates on bytes (as opposed to segments)..." alt="" coords="213,208,331,235"/>
+<area shape="rect" id="node7" href="$classsliq_1_1FixedRate.html" title="A send&#45;side replacement for a congestion control algorithm that sends at a configurable, fixed rate. " alt="" coords="217,259,327,285"/>
+<area shape="rect" id="node8" href="$classsliq_1_1PacingSender.html" title="A wrapper for adding pacing to congestion control algorithms. " alt="" coords="207,309,337,336"/>
+</map>

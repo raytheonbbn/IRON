@@ -1,0 +1,6 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="node1" href="$classiron_1_1BinQueueMgr.html" title="The BinQueueMgr class stores and manages the queues for a. " alt="" coords="5,56,136,83"/>
+<area shape="rect" id="node2" href="$classiron_1_1EWMABinQueueMgr.html" title="Queue manager using an exponential weighted moving average. This algorithm maintains a smoothed weigh..." alt="" coords="185,5,357,32"/>
+<area shape="rect" id="node3" href="$classiron_1_1HvyballBinQueueMgr.html" title="HvyballBinQueueMgr class to implement the HvyballBinQueueMgr algorithm for latency reduction..." alt="" coords="184,56,359,83"/>
+<area shape="rect" id="node4" href="$classiron_1_1NPLBBinQueueMgr.html" title="NPLBBinQueueMgr class to implement the No Packet Left Behind algorithm for avoiding starvation..." alt="" coords="189,107,354,133"/>
+</map>

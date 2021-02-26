@@ -1,0 +1,4 @@
+<map id="ReleaseController" name="ReleaseController">
+<area shape="rect" id="node2" href="$classThrottledReleaseController.html" title="ThrottledReleaseController" alt="" coords="5,80,183,107"/>
+<area shape="rect" id="node3" href="$classUnthrottledReleaseController.html" title="A Release Controller that releases packets to the local application as they are received. " alt="" coords="207,80,397,107"/>
+</map>

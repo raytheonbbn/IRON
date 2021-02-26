@@ -1,0 +1,13 @@
+<map id="iron::BPDequeueAlg::TransmitCandidate" name="iron::BPDequeueAlg::TransmitCandidate">
+<area shape="rect" id="node2" href="$classiron_1_1Packet.html" title="iron::Packet" alt="" coords="811,32,903,59"/>
+<area shape="rect" id="node3" href="$classiron_1_1BinQueueMgr.html" title="The BinQueueMgr class stores and manages the queues for a. " alt="" coords="792,83,923,109"/>
+<area shape="rect" id="node4" href="$structiron_1_1LatencyQueue.html" title="iron::LatencyQueue" alt="" coords="492,43,627,69"/>
+<area shape="rect" id="node5" href="$classiron_1_1Queue.html" title="iron::Queue" alt="" coords="253,43,343,69"/>
+<area shape="rect" id="node6" href="$classiron_1_1PacketPool.html" title="iron::PacketPool" alt="" coords="5,13,124,40"/>
+<area shape="rect" id="node7" href="$classiron_1_1BinMap.html" title="Mapping of identifiers to IRON nodes and multicast groups. " alt="" coords="512,93,607,120"/>
+<area shape="rect" id="node8" href="$classiron_1_1QueueDepths.html" title="The QueueDepths class stores queue depth information for a set of bins. " alt="" coords="494,144,625,171"/>
+<area shape="rect" id="node9" href="$classiron_1_1Time.html" title="iron::Time" alt="" coords="817,135,897,161"/>
+<area shape="rect" id="node11" href="$structiron_1_1PacketQueue_1_1QueueWalkState.html" title="iron::PacketQueue::\lQueueWalkState" alt="" coords="788,237,927,278"/>
+<area shape="rect" id="node12" href="$classiron_1_1OrderedList.html" title="iron::OrderedList\&lt;\l iron::Packet *, iron\l::Time \&gt;" alt="" coords="492,216,627,272"/>
+<area shape="rect" id="node13" href="$classiron_1_1List.html" title="iron::List\&lt; iron::Packet * \&gt;" alt="" coords="472,296,647,323"/>
+</map>

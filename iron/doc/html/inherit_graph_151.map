@@ -1,0 +1,5 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="node1" href="$classReleaseController.html" title="An abstract base class for Release Controllers. " alt="" coords="5,31,132,57"/>
+<area shape="rect" id="node2" href="$classThrottledReleaseController.html" title="ThrottledReleaseController" alt="" coords="187,5,364,32"/>
+<area shape="rect" id="node3" href="$classUnthrottledReleaseController.html" title="A Release Controller that releases packets to the local application as they are received. " alt="" coords="180,56,371,83"/>
+</map>
