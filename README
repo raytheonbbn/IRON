@@ -18,4 +18,4 @@ iron/util         Utilities (capturing packets, reliable multicast, etc.)
 simulation/mobsim Backpressure simulation written in matlab
 utils/wireshark   Wireshark plugins for IRON packet headers
 
-API dcoumentation: https://github.com/RaytheonBNN/IRON/iron/doc/html/index.html
+API documentation: https://github.com/RaytheonBNN/IRON/iron/doc/html/index.html
