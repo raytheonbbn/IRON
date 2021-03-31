@@ -1,4 +1,0 @@
-<map id="iron::EdgeIfConfig" name="iron::EdgeIfConfig">
-<area shape="rect" id="node2" href="$classTcpEdgeIfConfig.html" title="Edge interface configuration information for the IRON TCP Proxy. " alt="" coords="5,80,125,107"/>
-<area shape="rect" id="node3" href="$classUdpEdgeIfConfig.html" title="Edge interface configuration information for the IRON UDP Proxy. " alt="" coords="149,80,272,107"/>
-</map>

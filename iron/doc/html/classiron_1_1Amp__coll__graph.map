@@ -1,8 +1,0 @@
-<map id="iron::Amp" name="iron::Amp">
-<area shape="rect" id="node2" href="$classiron_1_1RemoteControlClient.html" title="iron::RemoteControlClient" alt="" coords="684,11,857,37"/>
-<area shape="rect" id="node3" href="$classiron_1_1RemoteControl.html" title="iron::RemoteControl" alt="" coords="487,35,625,61"/>
-<area shape="rect" id="node7" href="$classiron_1_1RemoteControlServer.html" title="A class for remote control communications. " alt="" coords="682,61,859,88"/>
-<area shape="rect" id="node4" href="$classiron_1_1EndpointInfo.html" title="iron::EndpointInfo" alt="" coords="215,7,339,33"/>
-<area shape="rect" id="node5" href="$classiron_1_1Ipv4Address.html" title="iron::Ipv4Address" alt="" coords="5,7,129,33"/>
-<area shape="rect" id="node8" href="$classiron_1_1HashTable.html" title="iron::HashTable\&lt; iron\l::FiveTuple, iron::FlowDefn \&gt;" alt="" coords="675,113,867,154"/>
-</map>

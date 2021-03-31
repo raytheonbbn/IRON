@@ -1,4 +1,0 @@
-<map id="iron::PacketQueue::QueueWalkState" name="iron::PacketQueue::QueueWalkState">
-<area shape="rect" id="node2" href="$classiron_1_1OrderedList.html" title="iron::OrderedList\&lt;\l iron::Packet *, iron\l::Time \&gt;" alt="" coords="5,5,140,61"/>
-<area shape="rect" id="node3" href="$classiron_1_1List.html" title="iron::List\&lt; iron::Packet * \&gt;" alt="" coords="164,20,339,47"/>
-</map>

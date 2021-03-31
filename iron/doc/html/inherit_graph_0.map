@@ -1,7 +1,0 @@
-<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
-<area shape="rect" id="node1" href="$classAdmissionController.html" title="A base class for admission control in the UDP proxy. " alt="" coords="5,81,144,108"/>
-<area shape="rect" id="node2" href="$classFlogAdmissionController.html" title="An admission controller for flows with floored log utility. " alt="" coords="195,5,359,32"/>
-<area shape="rect" id="node3" href="$classLogAdmissionController.html" title="An admission controller for flows with logarithmic (elastic) utility. " alt="" coords="197,56,357,83"/>
-<area shape="rect" id="node4" href="$classStrapAdmissionController.html" title="An admission controller for flows with trapezoidal utility. " alt="" coords="192,107,363,133"/>
-<area shape="rect" id="node5" href="$classTrapAdmissionController.html" title="An admission controller for flows with trapezoidal utility. " alt="" coords="195,157,360,184"/>
-</map>

@@ -1,5 +1,0 @@
-<map id="sliq::CcAlg" name="sliq::CcAlg">
-<area shape="rect" id="node2" href="$classsliq_1_1CongCtrlInterface.html" title="Pure virtual base class for send&#45;side congestion control algorithms. " alt="" coords="5,5,159,32"/>
-<area shape="rect" id="node3" href="$classiron_1_1Timer_1_1Handle.html" title="A class for unique timer event handles. " alt="" coords="183,5,317,32"/>
-<area shape="rect" id="node4" href="$classiron_1_1Time.html" title="iron::Time" alt="" coords="341,5,421,32"/>
-</map>

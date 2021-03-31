@@ -1,6 +1,0 @@
-<map id="iron::CallbackInterface" name="iron::CallbackInterface">
-<area shape="rect" id="node2" href="$classiron_1_1CallbackNoArg.html" title="The template for a callback having no arguments. " alt="" coords="207,5,377,32"/>
-<area shape="rect" id="node3" href="$classiron_1_1CallbackOneArg.html" title="The template for a callback having one argument. " alt="" coords="219,57,365,98"/>
-<area shape="rect" id="node4" href="$classiron_1_1CallbackThreeArg.html" title="The template for a callback having three arguments. " alt="" coords="215,122,369,163"/>
-<area shape="rect" id="node5" href="$classiron_1_1CallbackTwoArg.html" title="The template for a callback having two arguments. " alt="" coords="219,187,365,229"/>
-</map>

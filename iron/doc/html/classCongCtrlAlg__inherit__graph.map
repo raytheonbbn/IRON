@@ -1,4 +1,0 @@
-<map id="CongCtrlAlg" name="CongCtrlAlg">
-<area shape="rect" id="node2" href="$classNoCongCtrlAlg.html" title="A Congestion Control Algorithm that does no congestion control. " alt="" coords="5,80,116,107"/>
-<area shape="rect" id="node3" href="$classVJCongCtrlAlg.html" title="TCP VJ Congestion Control Algorithm. " alt="" coords="141,80,250,107"/>
-</map>

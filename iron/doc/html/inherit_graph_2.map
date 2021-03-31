@@ -1,5 +1,0 @@
-<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
-<area shape="rect" id="node1" href="$classCongCtrlAlg.html" title="CongCtrlAlg" alt="" coords="5,31,99,57"/>
-<area shape="rect" id="node2" href="$classNoCongCtrlAlg.html" title="A Congestion Control Algorithm that does no congestion control. " alt="" coords="147,5,257,32"/>
-<area shape="rect" id="node3" href="$classVJCongCtrlAlg.html" title="TCP VJ Congestion Control Algorithm. " alt="" coords="147,56,257,83"/>
-</map>
