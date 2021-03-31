@@ -1,3 +1,5 @@
+![IRON_logo](https://user-images.githubusercontent.com/15472398/113164145-d8d57f80-920e-11eb-9602-2323d144c54c.png)
+
 The goal for the Intrinsically Resilient Overlay Network (IRON) and the
 Generalized Network Assisted Transport (GNAT) projects is improving the
 performance of networked applications that must exchange information over
