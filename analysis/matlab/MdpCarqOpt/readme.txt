@@ -1,6 +1,6 @@
 This directory contains code for analyzing the behavior of an optimally
 configured round-based Coded ARQ (CARQ) error control approach. The analysis
-uses a Markov Deciion Process (MDP) model of the encoding and transmission
+uses a Markov Decision Process (MDP) model of the encoding and transmission
 mechanism, and uses a Dynamic Program to determine the best strategy given
 the MDP model.
 
@@ -28,7 +28,7 @@ aeccarqresults.txt
 	aecsim > aeccarqresults.txt
 
 plotMdpAecDelta.m
-	Script the generates a 3D visualization of the performance
+	Script that generates a 3D visualization of the performance
 	differences between the MDP solution and the AEC algorithm.
 	This uses as input both mdpCarqResults.txt and aeccarqresults.txt
 
